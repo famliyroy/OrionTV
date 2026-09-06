@@ -1,9 +1,11 @@
+import "react-native-gesture-handler";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { Platform, View, StyleSheet } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Toast from "react-native-toast-message";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -81,25 +83,55 @@ export default function RootLayout() {
   }
 
   return (
-    <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-        <View style={styles.container}>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="detail" options={{ headerShown: false }} />
-            {Platform.OS !== "web" && <Stack.Screen name="play" options={{ headerShown: false }} />}
-            <Stack.Screen name="search" options={{ headerShown: false }} />
-            <Stack.Screen name="live" options={{ headerShown: false }} />
-            <Stack.Screen name="settings" options={{ headerShown: false }} />
-            <Stack.Screen name="favorites" options={{ headerShown: false }} />
-            <Stack.Screen name="+not-found" />
-          </Stack>
-        </View>
-        <Toast />
-        <LoginModal />
-        <UpdateModal />
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+          <View style={styles.container}>
+            <Stack
+              screenOptions={{
+                // 强化页面切换动效：默认底部滑入的卡片式转场
+                animation: "slide_from_right",
+                animationDuration: 280,
+                gestureEnabled: true,
+                gestureDirection: "horizontal",
+              }}
+            >
+              <Stack.Screen name="index" options={{ headerShown: false, animation: "fade" }} />
+              <Stack.Screen
+                name="detail"
+                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 300 }}
+              />
+              {Platform.OS !== "web" && (
+                <Stack.Screen
+                  name="play"
+                  options={{ headerShown: false, animation: "fade_from_bottom", animationDuration: 250 }}
+                />
+              )}
+              <Stack.Screen
+                name="search"
+                options={{ headerShown: false, animation: "slide_from_bottom", animationDuration: 300 }}
+              />
+              <Stack.Screen
+                name="live"
+                options={{ headerShown: false, animation: "fade_from_bottom", animationDuration: 250 }}
+              />
+              <Stack.Screen
+                name="settings"
+                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 280 }}
+              />
+              <Stack.Screen
+                name="favorites"
+                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 280 }}
+              />
+              <Stack.Screen name="+not-found" />
+            </Stack>
+          </View>
+          <Toast />
+          <LoginModal />
+          <UpdateModal />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

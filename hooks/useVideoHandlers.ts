@@ -109,7 +109,7 @@ export const useVideoHandlers = ({
     onLoad,
     onLoadStart,
     onError,
-    useNativeControls: deviceType !== 'tv',
+    useNativeControls: false, // 全平台使用自定义控制条（含手势与遥控器支持）
     shouldPlay: true,
   }), [
     currentEpisode?.url,

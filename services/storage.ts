@@ -29,6 +29,9 @@ export interface PlayerSettings {
   playbackRate?: number;
 }
 
+// 默认服务器地址（个人定制）
+export const DEFAULT_API_BASE_URL = "https://tv.668664.xyz";
+
 export interface AppSettings {
   apiBaseUrl: string;
   remoteInputEnabled: boolean;
@@ -315,7 +318,7 @@ export class SearchHistoryManager {
 export class SettingsManager {
   static async get(): Promise<AppSettings> {
     const defaultSettings: AppSettings = {
-      apiBaseUrl: "",
+      apiBaseUrl: DEFAULT_API_BASE_URL,
       remoteInputEnabled: true,
       videoSource: {
         enabledAll: true,
@@ -325,7 +328,15 @@ export class SettingsManager {
     };
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
-      return data ? { ...defaultSettings, ...JSON.parse(data) } : defaultSettings;
+      if (data) {
+        const parsed = JSON.parse(data);
+        // 已保存的地址为空时回落到默认地址
+        if (parsed.apiBaseUrl !== undefined && !parsed.apiBaseUrl) {
+          parsed.apiBaseUrl = DEFAULT_API_BASE_URL;
+        }
+        return { ...defaultSettings, ...parsed };
+      }
+      return defaultSettings;
     } catch (error) {
       logger.info("Failed to get settings:", error);
       return defaultSettings;

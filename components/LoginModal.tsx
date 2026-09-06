@@ -18,6 +18,8 @@ const LoginModal = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // 登录 / 注册 模式切换
+  const [mode, setMode] = useState<"login" | "register">("login");
   const usernameInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const pathname = usePathname();
@@ -132,6 +134,36 @@ const LoginModal = () => {
     }
   };
 
+  // 注册：不限制用户名和密码的字符数与格式，仅需非空
+  const handleRegister = async () => {
+    if (!username || !password) {
+      Toast.show({ type: "error", text1: "请输入用户名和密码" });
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await api.register(username, password);
+      await checkLoginStatus(apiBaseUrl);
+      await refreshPlayRecords();
+
+      // 注册成功即视为登录，保存凭据
+      await LoginCredentialsManager.save({ username, password });
+
+      Toast.show({ type: "success", text1: "注册成功", text2: "已自动登录" });
+      hideLoginModal();
+      setIsModalReady(false);
+      Keyboard.dismiss();
+    } catch (error) {
+      Toast.show({
+        type: "error",
+        text1: "注册失败",
+        text2: error instanceof Error ? error.message : "服务器拒绝了注册请求",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Handle navigation between inputs using returnKeyType
   const handleUsernameSubmit = () => {
     passwordInputRef.current?.focus();
@@ -227,6 +259,16 @@ const styles = StyleSheet.create({
   button: {
     width: "100%",
     height: 50,
+  },
+  modeSwitch: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 20,
+    width: "100%",
+  },
+  modeButton: {
+    flex: 1,
+    height: 44,
   },
 });
 

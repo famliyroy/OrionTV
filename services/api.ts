@@ -93,6 +93,16 @@ export class API {
       throw new Error("API_URL_NOT_SET");
     }
 
+    // 附带已保存的登录 Cookie（用于需要登录态的接口，如修改密码）
+    const savedCookies = await AsyncStorage.getItem("authCookies");
+    if (savedCookies) {
+      const headers = new Headers(options.headers || {});
+      if (!headers.has("Cookie")) {
+        headers.set("Cookie", savedCookies);
+      }
+      options = { ...options, headers };
+    }
+
     const response = await fetch(`${this.baseURL}${url}`, options);
 
     if (response.status === 401) {
@@ -119,6 +129,40 @@ export class API {
       await AsyncStorage.setItem("authCookies", cookies);
     }
 
+    return response.json();
+  }
+
+  async register(username: string, password: string): Promise<{ ok: boolean }> {
+    const response = await this._fetch("/api/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+
+    // 注册成功后服务器会直接下发登录 Cookie
+    const cookies = response.headers.get("Set-Cookie");
+    if (cookies) {
+      await AsyncStorage.setItem("authCookies", cookies);
+    }
+
+    return response.json();
+  }
+
+  async changePassword(newPassword: string): Promise<{ ok: boolean }> {
+    const response = await this._fetch("/api/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword }),
+    });
+    return response.json();
+  }
+
+  async changeUsername(newUsername: string): Promise<{ ok: boolean }> {
+    const response = await this._fetch("/api/change-username", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newUsername }),
+    });
     return response.json();
   }
 

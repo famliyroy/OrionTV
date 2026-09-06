@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OrionTV is a React Native TVOS application for streaming video content, built with Expo and designed specifically for TV platforms (Apple TV and Android TV). This is a frontend-only application that connects to external APIs and includes a built-in remote control server for external device control.
 
+> 本仓库为个人定制分支（`custom`），默认 API 地址内置为 `https://tv.668664.xyz`；定制内容包括：播放页自动横屏、沉浸式隐藏状态栏、双击暂停/长按 2 倍速手势、可拖动进度条、精简五键控制条（手机 16:10 紧凑布局）、页面切换动效、登录弹窗注册功能、设置页用户管理卡片（改密码/改用户名）。推送到 `custom` 分支后由 GitHub Actions 自动构建 APK 并发布 Release。
+
 ## Key Commands
 
 ### Development Commands

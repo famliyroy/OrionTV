@@ -1,12 +1,12 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
-import { Pause, Play, SkipForward, List, Tv, ArrowDownToDot, ArrowUpFromDot, Gauge } from "lucide-react-native";
+import React, { useMemo, useRef, useState } from "react";
+import { View, Text, StyleSheet, PanResponder } from "react-native";
+import { Pause, Play, SkipBack, SkipForward, List, Gauge } from "lucide-react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { MediaButton } from "@/components/MediaButton";
 
 import usePlayerStore from "@/stores/playerStore";
 import useDetailStore from "@/stores/detailStore";
-import { useSources } from "@/stores/sourceStore";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 interface PlayerControlsProps {
   showControls: boolean;
@@ -24,24 +24,63 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
     playbackRate,
     togglePlayPause,
     playEpisode,
+    seekTo,
     setShowEpisodeModal,
-    setShowSourceModal,
     setShowSpeedModal,
-    setIntroEndTime,
-    setOutroStartTime,
-    introEndTime,
-    outroStartTime,
   } = usePlayerStore();
 
   const { detail } = useDetailStore();
-  const resources = useSources();
+  const { deviceType } = useResponsiveLayout();
+  const isMobile = deviceType === "mobile";
+  const isTablet = deviceType === "tablet";
 
   const videoTitle = detail?.title || "";
   const currentEpisode = episodes[currentEpisodeIndex];
   const currentEpisodeTitle = currentEpisode?.title;
-  const currentSource = resources.find((r) => r.source === detail?.source);
-  const currentSourceName = currentSource?.source_name;
   const hasNextEpisode = currentEpisodeIndex < (episodes.length || 0) - 1;
+  const hasPrevEpisode = currentEpisodeIndex > 0;
+
+  // ---- 可拖动进度条 ----
+  const [barWidth, setBarWidth] = useState(0);
+  const [dragRatio, setDragRatio] = useState<number | null>(null);
+  const dragRatioRef = useRef<number | null>(null);
+
+  const durationMillis = status?.isLoaded ? status.durationMillis || 0 : 0;
+
+  const clampRatio = (ratio: number) => Math.max(0, Math.min(1, ratio));
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        if (barWidth <= 0) return;
+        const ratio = clampRatio(evt.nativeEvent.locationX / barWidth);
+        dragRatioRef.current = ratio;
+        setDragRatio(ratio);
+      },
+      onPanResponderMove: (evt) => {
+        if (barWidth <= 0) return;
+        const ratio = clampRatio(evt.nativeEvent.locationX / barWidth);
+        dragRatioRef.current = ratio;
+        setDragRatio(ratio);
+      },
+      onPanResponderRelease: () => {
+        const ratio = dragRatioRef.current;
+        if (ratio !== null && durationMillis > 0) {
+          seekTo(ratio * durationMillis);
+        }
+        dragRatioRef.current = null;
+        setDragRatio(null);
+      },
+      onPanResponderTerminate: () => {
+        dragRatioRef.current = null;
+        setDragRatio(null);
+      },
+    })
+  ).current;
+
+  const displayRatio = dragRatio !== null ? dragRatio : isSeeking ? seekPosition : progressPosition;
 
   const formatTime = (milliseconds: number) => {
     if (!milliseconds) return "00:00";
@@ -57,66 +96,101 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
     }
   };
 
+  const onPlayPrevEpisode = () => {
+    if (hasPrevEpisode) {
+      playEpisode(currentEpisodeIndex - 1);
+    }
+  };
+
+  // 紧凑尺寸：按手机 16:10 横屏优化
+  const sizes = useMemo(() => {
+    if (isMobile) {
+      return { icon: 20, buttonPadding: 6, gap: 6, overlayPaddingH: 12, overlayPaddingV: 6, title: 13, time: 11, barHeight: 4, thumb: 12, marginTop: 6 };
+    }
+    if (isTablet) {
+      return { icon: 22, buttonPadding: 8, gap: 8, overlayPaddingH: 16, overlayPaddingV: 10, title: 15, time: 12, barHeight: 6, thumb: 14, marginTop: 8 };
+    }
+    return { icon: 24, buttonPadding: 10, gap: 10, overlayPaddingH: 20, overlayPaddingV: 14, title: 16, time: 13, barHeight: 8, thumb: 16, marginTop: 12 };
+  }, [isMobile, isTablet]);
+
   return (
-    <View style={styles.controlsOverlay}>
+    <View
+      style={[
+        styles.controlsOverlay,
+        { paddingHorizontal: sizes.overlayPaddingH, paddingVertical: sizes.overlayPaddingV },
+      ]}
+    >
       <View style={styles.topControls}>
-        <Text style={styles.controlTitle}>
-          {videoTitle} {currentEpisodeTitle ? `- ${currentEpisodeTitle}` : ""}{" "}
-          {currentSourceName ? `(${currentSourceName})` : ""}
+        <Text style={[styles.controlTitle, { fontSize: sizes.title }]} numberOfLines={1}>
+          {videoTitle} {currentEpisodeTitle ? `- ${currentEpisodeTitle}` : ""}
         </Text>
       </View>
 
       <View style={styles.bottomControlsContainer}>
-        <View style={styles.progressBarContainer}>
-          <View style={styles.progressBarBackground} />
+        <View
+          style={[styles.progressBarContainer, { height: Math.max(sizes.barHeight, 24) }]}
+          onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+          {...panResponder.panHandlers}
+        >
+          <View style={[styles.progressBarBackground, { height: sizes.barHeight, top: (Math.max(sizes.barHeight, 24) - sizes.barHeight) / 2 }]} />
           <View
             style={[
               styles.progressBarFilled,
               {
-                width: `${(isSeeking ? seekPosition : progressPosition) * 100}%`,
+                height: sizes.barHeight,
+                top: (Math.max(sizes.barHeight, 24) - sizes.barHeight) / 2,
+                width: `${displayRatio * 100}%`,
               },
             ]}
           />
-          <Pressable style={styles.progressBarTouchable} />
+          <View
+            style={[
+              styles.progressThumb,
+              {
+                width: sizes.thumb,
+                height: sizes.thumb,
+                borderRadius: sizes.thumb / 2,
+                top: (Math.max(sizes.barHeight, 24) - sizes.thumb) / 2,
+                left: `${displayRatio * 100}%`,
+                marginLeft: -sizes.thumb / 2,
+              },
+            ]}
+          />
         </View>
 
-        <ThemedText style={{ color: "white", marginTop: 5 }}>
+        <ThemedText style={{ color: "white", marginTop: 2, fontSize: sizes.time }}>
           {status?.isLoaded
-            ? `${formatTime(status.positionMillis)} / ${formatTime(status.durationMillis || 0)}`
+            ? `${formatTime(dragRatio !== null ? dragRatio * durationMillis : status.positionMillis)} / ${formatTime(durationMillis)}`
             : "00:00 / 00:00"}
         </ThemedText>
 
-        <View style={styles.bottomControls}>
-          <MediaButton onPress={setIntroEndTime} timeLabel={introEndTime ? formatTime(introEndTime) : undefined}>
-            <ArrowDownToDot color="white" size={24} />
+        <View style={[styles.bottomControls, { gap: sizes.gap, marginTop: sizes.marginTop }]}>
+          <MediaButton onPress={onPlayPrevEpisode} disabled={!hasPrevEpisode} style={{ padding: sizes.buttonPadding, minWidth: 0 }}>
+            <SkipBack color={hasPrevEpisode ? "white" : "#666"} size={sizes.icon} />
           </MediaButton>
 
-          <MediaButton onPress={togglePlayPause} hasTVPreferredFocus={showControls}>
+          <MediaButton onPress={togglePlayPause} hasTVPreferredFocus={showControls} style={{ padding: sizes.buttonPadding, minWidth: 0 }}>
             {status?.isLoaded && status.isPlaying ? (
-              <Pause color="white" size={24} />
+              <Pause color="white" size={sizes.icon} />
             ) : (
-              <Play color="white" size={24} />
+              <Play color="white" size={sizes.icon} />
             )}
           </MediaButton>
 
-          <MediaButton onPress={onPlayNextEpisode} disabled={!hasNextEpisode}>
-            <SkipForward color={hasNextEpisode ? "white" : "#666"} size={24} />
+          <MediaButton onPress={onPlayNextEpisode} disabled={!hasNextEpisode} style={{ padding: sizes.buttonPadding, minWidth: 0 }}>
+            <SkipForward color={hasNextEpisode ? "white" : "#666"} size={sizes.icon} />
           </MediaButton>
 
-          <MediaButton onPress={setOutroStartTime} timeLabel={outroStartTime ? formatTime(outroStartTime) : undefined}>
-            <ArrowUpFromDot color="white" size={24} />
+          <MediaButton
+            onPress={() => setShowSpeedModal(true)}
+            timeLabel={playbackRate !== 1.0 ? `${playbackRate}x` : undefined}
+            style={{ padding: sizes.buttonPadding, minWidth: 0 }}
+          >
+            <Gauge color="white" size={sizes.icon} />
           </MediaButton>
 
-          <MediaButton onPress={() => setShowEpisodeModal(true)}>
-            <List color="white" size={24} />
-          </MediaButton>
-
-          <MediaButton onPress={() => setShowSpeedModal(true)} timeLabel={playbackRate !== 1.0 ? `${playbackRate}x` : undefined}>
-            <Gauge color="white" size={24} />
-          </MediaButton>
-
-          <MediaButton onPress={() => setShowSourceModal(true)}>
-            <Tv color="white" size={24} />
+          <MediaButton onPress={() => setShowEpisodeModal(true)} style={{ padding: sizes.buttonPadding, minWidth: 0 }}>
+            <List color="white" size={sizes.icon} />
           </MediaButton>
         </View>
       </View>
@@ -129,7 +203,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.4)",
     justifyContent: "space-between",
-    padding: 20,
   },
   topControls: {
     flexDirection: "row",
@@ -138,7 +211,6 @@ const styles = StyleSheet.create({
   },
   controlTitle: {
     color: "white",
-    fontSize: 16,
     fontWeight: "bold",
     flex: 1,
     textAlign: "center",
@@ -152,57 +224,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    gap: 10,
     flexWrap: "wrap",
-    marginTop: 15,
   },
   progressBarContainer: {
     width: "100%",
-    height: 8,
     position: "relative",
-    marginTop: 10,
+    justifyContent: "center",
   },
   progressBarBackground: {
     position: "absolute",
     left: 0,
     right: 0,
-    height: 8,
     backgroundColor: "rgba(255, 255, 255, 0.3)",
     borderRadius: 4,
   },
   progressBarFilled: {
     position: "absolute",
     left: 0,
-    height: 8,
     backgroundColor: "#fff",
     borderRadius: 4,
   },
-  progressBarTouchable: {
+  progressThumb: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    height: 30,
-    top: -10,
-    zIndex: 10,
-  },
-  controlButton: {
-    padding: 10,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  topRightContainer: {
-    padding: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    minWidth: 44, // Match TouchableOpacity default size for alignment
-  },
-  resolutionText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-    backgroundColor: "rgba(0,0,0,0.5)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    backgroundColor: "#fff",
+    elevation: 2,
   },
 });

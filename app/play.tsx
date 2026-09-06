@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useCallback, memo, useMemo } from "react";
-import { StyleSheet, TouchableOpacity, BackHandler, AppState, AppStateStatus, View } from "react-native";
+import { StyleSheet, TouchableOpacity, BackHandler, AppState, AppStateStatus, View, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Video } from "expo-av";
 import { useKeepAwake } from "expo-keep-awake";
+import { StatusBar } from "expo-status-bar";
+import * as ScreenOrientation from "expo-screen-orientation";
+import * as NavigationBar from "expo-navigation-bar";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { ThemedView } from "@/components/ThemedView";
 import { PlayerControls } from "@/components/PlayerControls";
 import { EpisodeSelectionModal } from "@/components/EpisodeSelectionModal";
@@ -76,6 +80,7 @@ export default function PlayScreen() {
 
   // 响应式布局配置
   const { deviceType } = useResponsiveLayout();
+  const isTV = deviceType === "tv";
 
   const {
     episodeIndex: episodeIndexStr,
@@ -152,7 +157,34 @@ export default function PlayScreen() {
     };
   }, [episodeIndex, source, position, setVideoRef, reset, loadVideo, id, title]);
 
-  // 优化的屏幕点击处理
+  // 进入播放页：移动端/平板自动横屏 + 沉浸式（隐藏状态栏与导航栏）；退出时还原
+  useEffect(() => {
+    if (isTV) return;
+
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch((e) =>
+      logger.warn("Failed to lock landscape orientation:", e)
+    );
+    NavigationBar.setVisibilityAsync("hidden").catch((e) => logger.warn("Failed to hide navigation bar:", e));
+    NavigationBar.setBehaviorAsync("overlay-swipe").catch(() => {});
+
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch((e) =>
+        logger.warn("Failed to restore portrait orientation:", e)
+      );
+      NavigationBar.setVisibilityAsync("visible").catch(() => {});
+    };
+  }, [isTV]);
+
+  // 移动端控制条自动隐藏
+  useEffect(() => {
+    if (isTV || !showControls) return;
+    const timeoutId = setTimeout(() => {
+      setShowControls(false);
+    }, 4000);
+    return () => clearTimeout(timeoutId);
+  }, [isTV, showControls, setShowControls]);
+
+  // 优化的屏幕点击处理（TV）
   const onScreenPress = useCallback(() => {
     if (deviceType === "tv") {
       tvRemoteHandler.onScreenPress();
@@ -160,6 +192,58 @@ export default function PlayScreen() {
       setShowControls(!showControls);
     }
   }, [deviceType, tvRemoteHandler, setShowControls, showControls]);
+
+  // ---- 触摸手势：单击切换控制条 / 双击播放暂停 / 长按 2 倍速 ----
+  const previousRateRef = useRef<number>(1.0);
+
+  const singleTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(1)
+        .maxDuration(250)
+        .onEnd(() => {
+          const { showControls: sc, setShowControls: ssc } = usePlayerStore.getState();
+          ssc(!sc);
+        }),
+    []
+  );
+
+  const doubleTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(2)
+        .maxDuration(250)
+        .onEnd(() => {
+          usePlayerStore.getState().togglePlayPause();
+        }),
+    []
+  );
+
+  const longPress = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(300)
+        .onStart(() => {
+          const state = usePlayerStore.getState();
+          previousRateRef.current = state.playbackRate;
+          if (state.playbackRate !== 2.0) {
+            state.setPlaybackRate(2.0);
+            Toast.show({ type: "info", text1: "2 倍速播放中", visibilityTime: 1200 });
+          }
+        })
+        .onFinalize(() => {
+          const state = usePlayerStore.getState();
+          if (state.playbackRate === 2.0 && previousRateRef.current !== 2.0) {
+            state.setPlaybackRate(previousRateRef.current);
+          }
+        }),
+    []
+  );
+
+  const composedGestures = useMemo(
+    () => Gesture.Exclusive(longPress, doubleTap, singleTap),
+    [longPress, doubleTap, singleTap]
+  );
 
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
@@ -213,36 +297,53 @@ export default function PlayScreen() {
     return <VideoLoadingAnimation showProgressBar />;
   }
 
+  const renderVideoContent = () => (
+    <>
+      {/* 条件渲染Video组件：只有在有有效URL时才渲染 */}
+      {currentEpisode?.url ? (
+        <Video ref={videoRef} style={dynamicStyles.videoPlayer} {...videoProps} />
+      ) : (
+        <LoadingContainer style={dynamicStyles.loadingContainer} currentEpisode={currentEpisode} />
+      )}
+
+      {showControls &&
+        (isTV ? (
+          <PlayerControls showControls={showControls} setShowControls={setShowControls} />
+        ) : (
+          // 触摸设备：点击控制条空白处隐藏控制条（按钮自身事件优先，互不影响）
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowControls(false)}>
+            <PlayerControls showControls={showControls} setShowControls={setShowControls} />
+          </Pressable>
+        ))}
+
+      <SeekingBar />
+
+      {/* 只在Video组件存在且正在加载时显示加载动画覆盖层 */}
+      {currentEpisode?.url && isLoading && (
+        <View style={dynamicStyles.loadingContainer}>
+          <VideoLoadingAnimation showProgressBar />
+        </View>
+      )}
+
+      {/* <NextEpisodeOverlay visible={showNextEpisodeOverlay} onCancel={() => setShowNextEpisodeOverlay(false)} /> */}
+    </>
+  );
+
   return (
     <ThemedView focusable style={dynamicStyles.container}>
-      <TouchableOpacity
-        activeOpacity={1}
-        style={dynamicStyles.videoContainer}
-        onPress={onScreenPress}
-        disabled={deviceType !== "tv" && showControls} // 移动端和平板端在显示控制条时禁用触摸
-      >
-        {/* 条件渲染Video组件：只有在有有效URL时才渲染 */}
-        {currentEpisode?.url ? (
-          <Video ref={videoRef} style={dynamicStyles.videoPlayer} {...videoProps} />
-        ) : (
-          <LoadingContainer style={dynamicStyles.loadingContainer} currentEpisode={currentEpisode} />
-        )}
-
-        {showControls && deviceType === "tv" && (
-          <PlayerControls showControls={showControls} setShowControls={setShowControls} />
-        )}
-
-        <SeekingBar />
-
-        {/* 只在Video组件存在且正在加载时显示加载动画覆盖层 */}
-        {currentEpisode?.url && isLoading && (
-          <View style={dynamicStyles.loadingContainer}>
-            <VideoLoadingAnimation showProgressBar />
+      {/* 播放页隐藏手机状态栏 */}
+      <StatusBar hidden />
+      {isTV ? (
+        <TouchableOpacity activeOpacity={1} style={dynamicStyles.videoContainer} onPress={onScreenPress}>
+          {renderVideoContent()}
+        </TouchableOpacity>
+      ) : (
+        <GestureDetector gesture={composedGestures}>
+          <View style={dynamicStyles.videoContainer} collapsable={false}>
+            {renderVideoContent()}
           </View>
-        )}
-
-        {/* <NextEpisodeOverlay visible={showNextEpisodeOverlay} onCancel={() => setShowNextEpisodeOverlay(false)} /> */}
-      </TouchableOpacity>
+        </GestureDetector>
+      )}
 
       <EpisodeSelectionModal />
       <SourceSelectionModal />

@@ -1,4 +1,10 @@
-# OrionTV 📺
+# OrionTV 📺（个人定制版）
+
+> 本仓库是 [orion-lib/OrionTV](https://github.com/orion-lib/OrionTV) 的个人定制分支，所有个性化修改均提交在 **`custom`** 分支上。
+>
+> - 默认服务器地址已内置：**`https://tv.668664.xyz`**（可在设置页修改）
+> - 最新 APK 下载：见 [Releases](https://github.com/famliyroy/OrionTV/releases)
+> - 推送到 `custom` 分支后，GitHub Actions 会自动构建 APK 并发布 Release
 
 一个基于 React Native TVOS 和 Expo 构建的播放器，旨在提供流畅的视频观看体验。
 
@@ -8,6 +14,19 @@
 - **现代化前端**: 使用 Expo、React Native TVOS 和 TypeScript 构建，性能卓越。
 - **Expo Router**: 基于文件系统的路由，使导航逻辑清晰简单。
 - **TV 优化的 UI**: 专为电视遥控器交互设计的用户界面。
+
+## 🔧 本分支的个人定制（custom 分支）
+
+1. **全屏自动横屏**：进入播放页时，手机/平板自动锁定横屏，退出后恢复竖屏。
+2. **内置默认源**：API 地址默认填入 `https://tv.668664.xyz`，开箱即用。
+3. **页面切换动效**：全站启用更流畅的转场动画（首页淡入、详情页右滑入、搜索页底部滑入、播放页底部淡入），并支持手势返回。
+4. **精简播放页按键**：仅保留 上一集 / 播放暂停 / 下一集 / 倍速选择 / 剧集目录（点击可跳转）。
+5. **沉浸式播放**：播放时自动隐藏手机状态栏与系统导航栏。
+6. **播放手势**：双击屏幕 播放/暂停；长按屏幕 2 倍速播放，松开恢复原倍速。
+7. **紧凑控制条**：播放控制按钮按手机 16:10 横屏比例重新调整，更加紧凑。
+8. **进度条拖动 + 遥控器支持**：播放进度条支持直接拖动跳转；电视遥控器可聚焦选择各播放按钮，左右键快进/快退。
+9. **注册账号**：登录弹窗新增注册功能，用户名和密码不限制字符数（需服务端开启注册）。
+10. **用户管理卡片**：设置页新增「用户管理」卡片，可修改当前账号的密码与用户名。
 
 ## 🛠️ 技术栈
 
@@ -66,9 +85,15 @@ yarn ios-tv
 yarn android-tv
 ```
 
+## 📦 构建 APK
+
+- **云端构建（推荐）**：推送 `custom` 分支后，GitHub Actions（`.github/workflows/build-apk.yml`）自动完成 prebuild → 打包 → 发布 Release，也可在 Actions 页面手动触发。
+- **本地构建**：`yarn build`（需要本机已安装 JDK 17 与 Android SDK）。
+
 ## 使用
 
-- 1.2.x 以上版本需配合 [MoonTV](https://github.com/senshinya/MoonTV) 使用。
+- 1.2.x 以上版本需配合 [MoonTV](https://github.com/senshinya/MoonTV) 使用（本定制版默认对接 `https://tv.668664.xyz`）。
+- 注册 / 修改密码功能需要服务端开启对应接口（MoonTV 数据库存储模式下支持 `/api/register` 与 `/api/change-password`）。
 
 
 ## 📜 主要脚本

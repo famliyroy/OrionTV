@@ -42,6 +42,7 @@ interface PlayerState {
   playEpisode: (index: number) => void;
   togglePlayPause: () => void;
   seek: (duration: number) => void;
+  seekTo: (positionMillis: number) => void;
   handlePlaybackStatusUpdate: (newStatus: AVPlaybackStatus) => void;
   setLoading: (loading: boolean) => void;
   setShowControls: (show: boolean) => void;
@@ -282,6 +283,30 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
     } catch (error) {
       logger.debug("Failed to seek video:", error);
       Toast.show({ type: "error", text1: "快进/快退失败" });
+    }
+
+    set({
+      isSeeking: true,
+      seekPosition: newPosition / status.durationMillis,
+    });
+
+    if (get()._seekTimeout) {
+      clearTimeout(get()._seekTimeout);
+    }
+    const timeoutId = setTimeout(() => set({ isSeeking: false }), 1000);
+    set({ _seekTimeout: timeoutId });
+  },
+
+  seekTo: async (positionMillis) => {
+    const { status, videoRef } = get();
+    if (!status?.isLoaded || !status.durationMillis) return;
+
+    const newPosition = Math.max(0, Math.min(positionMillis, status.durationMillis));
+    try {
+      await videoRef?.current?.setPositionAsync(newPosition);
+    } catch (error) {
+      logger.debug("Failed to seek video to position:", error);
+      Toast.show({ type: "error", text1: "跳转失败" });
     }
 
     set({

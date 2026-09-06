@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { SettingsManager } from "@/services/storage";
+import { SettingsManager, DEFAULT_API_BASE_URL } from "@/services/storage";
 import { api, ServerConfig } from "@/services/api";
 import { storageConfig } from "@/services/storageConfig";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -32,7 +32,7 @@ interface SettingsState {
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  apiBaseUrl: "",
+  apiBaseUrl: DEFAULT_API_BASE_URL,
   m3uUrl: "",
   liveStreamSources: [],
   remoteInputEnabled: false,
