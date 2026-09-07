@@ -93,7 +93,7 @@ export class API {
       throw new Error("API_URL_NOT_SET");
     }
 
-    // 附带已保存的登录 Cookie（用于需要登录态的接口，如修改密码）
+    // 附带已保存的登录 Cookie（用于需要登录态的接口）
     const savedCookies = await AsyncStorage.getItem("authCookies");
     if (savedCookies) {
       const headers = new Headers(options.headers || {});
@@ -116,6 +116,15 @@ export class API {
     return response;
   }
 
+  // 从 Set-Cookie 响应头提取纯 name=value 对（去除 Path/Expires 等属性）
+  private extractCookiePairs(rawSetCookie: string): string {
+    const pairs = rawSetCookie
+      .split(/,(?=[^;]+=)/)
+      .map((part) => part.split(";")[0].trim())
+      .filter((pair) => pair.includes("="));
+    return Array.from(new Set(pairs)).join("; ");
+  }
+
   async login(username?: string | undefined, password?: string): Promise<{ ok: boolean }> {
     const response = await this._fetch("/api/login", {
       method: "POST",
@@ -126,7 +135,7 @@ export class API {
     // 存储cookie到AsyncStorage
     const cookies = response.headers.get("Set-Cookie");
     if (cookies) {
-      await AsyncStorage.setItem("authCookies", cookies);
+      await AsyncStorage.setItem("authCookies", this.extractCookiePairs(cookies));
     }
 
     return response.json();
@@ -142,7 +151,7 @@ export class API {
     // 注册成功后服务器会直接下发登录 Cookie
     const cookies = response.headers.get("Set-Cookie");
     if (cookies) {
-      await AsyncStorage.setItem("authCookies", cookies);
+      await AsyncStorage.setItem("authCookies", this.extractCookiePairs(cookies));
     }
 
     return response.json();

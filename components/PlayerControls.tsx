@@ -47,6 +47,12 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
 
   const durationMillis = status?.isLoaded ? status.durationMillis || 0 : 0;
 
+  // 用 ref 保存实时值，避免 PanResponder 闭包捕获首次渲染的旧值
+  const barWidthRef = useRef(0);
+  const durationRef = useRef(0);
+  barWidthRef.current = barWidth;
+  durationRef.current = durationMillis;
+
   const clampRatio = (ratio: number) => Math.max(0, Math.min(1, ratio));
 
   const panResponder = useRef(
@@ -54,21 +60,21 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (evt) => {
-        if (barWidth <= 0) return;
-        const ratio = clampRatio(evt.nativeEvent.locationX / barWidth);
+        if (barWidthRef.current <= 0) return;
+        const ratio = clampRatio(evt.nativeEvent.locationX / barWidthRef.current);
         dragRatioRef.current = ratio;
         setDragRatio(ratio);
       },
       onPanResponderMove: (evt) => {
-        if (barWidth <= 0) return;
-        const ratio = clampRatio(evt.nativeEvent.locationX / barWidth);
+        if (barWidthRef.current <= 0) return;
+        const ratio = clampRatio(evt.nativeEvent.locationX / barWidthRef.current);
         dragRatioRef.current = ratio;
         setDragRatio(ratio);
       },
       onPanResponderRelease: () => {
         const ratio = dragRatioRef.current;
-        if (ratio !== null && durationMillis > 0) {
-          seekTo(ratio * durationMillis);
+        if (ratio !== null && durationRef.current > 0) {
+          usePlayerStore.getState().seekTo(ratio * durationRef.current);
         }
         dragRatioRef.current = null;
         setDragRatio(null);

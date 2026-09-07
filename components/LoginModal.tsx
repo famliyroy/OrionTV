@@ -30,7 +30,7 @@ const LoginModal = () => {
   // Load saved credentials when modal opens
   useEffect(() => {
     if (isLoginModalVisible && !isSettingsPage) {
-            // 先确保键盘状态清理
+      // 先确保键盘状态清理
       Keyboard.dismiss();
 
       const loadCredentials = async () => {
@@ -96,16 +96,8 @@ const LoginModal = () => {
       await LoginCredentialsManager.save({ username, password });
 
       Toast.show({ type: "success", text1: "登录成功" });
-      // hideLoginModal();
 
-      // // Show disclaimer alert after successful login
-      // Alert.alert(
-      //   "免责声明",
-      //   "本应用仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。",
-      //   [{ text: "确定" }]
-      // );
-
-            // 在登录成功后清理状态，再显示 Alert
+      // 在登录成功后清理状态，再显示 Alert
       const hideAndAlert = () => {
         hideLoginModal();
         setIsModalReady(false);
@@ -169,6 +161,8 @@ const LoginModal = () => {
     passwordInputRef.current?.focus();
   };
 
+  const isLocalStorageServer = serverConfig?.StorageType === "localstorage";
+
   return (
     <Modal
       transparent={true}
@@ -178,9 +172,30 @@ const LoginModal = () => {
     >
       <View style={styles.overlay}>
         <ThemedView style={styles.container}>
-          <ThemedText style={styles.title}>需要登录</ThemedText>
-          <ThemedText style={styles.subtitle}>服务器需要验证您的身份</ThemedText>
-          {serverConfig?.StorageType !== "localstorage" && (
+          <ThemedText style={styles.title}>{mode === "login" ? "需要登录" : "注册账号"}</ThemedText>
+          <ThemedText style={styles.subtitle}>
+            {mode === "login" ? "服务器需要验证您的身份" : "创建新账号，用户名和密码长度不限"}
+          </ThemedText>
+
+          {/* 登录/注册 模式切换（仅多用户模式下显示） */}
+          {!isLocalStorageServer && (
+            <View style={styles.modeSwitch}>
+              <StyledButton
+                text="登录"
+                onPress={() => setMode("login")}
+                variant={mode === "login" ? "primary" : "ghost"}
+                style={styles.modeButton}
+              />
+              <StyledButton
+                text="注册"
+                onPress={() => setMode("register")}
+                variant={mode === "register" ? "primary" : "ghost"}
+                style={styles.modeButton}
+              />
+            </View>
+          )}
+
+          {(serverConfig?.StorageType !== "localstorage" || mode === "register") && (
             <TextInput
               ref={usernameInputRef}
               style={styles.input}
@@ -202,14 +217,14 @@ const LoginModal = () => {
             value={password}
             onChangeText={setPassword}
             returnKeyType="go"
-            onSubmitEditing={handleLogin}
+            onSubmitEditing={mode === "login" ? handleLogin : handleRegister}
           />
           <StyledButton
-            text={isLoading ? "" : "登录"}
-            onPress={handleLogin}
+            text={isLoading ? "" : mode === "login" ? "登录" : "注册"}
+            onPress={mode === "login" ? handleLogin : handleRegister}
             disabled={isLoading}
             style={styles.button}
-            hasTVPreferredFocus={!serverConfig || serverConfig.StorageType === "localstorage"}
+            hasTVPreferredFocus={isLocalStorageServer}
           >
             {isLoading && <ActivityIndicator color="#fff" />}
           </StyledButton>

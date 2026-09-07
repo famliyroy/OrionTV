@@ -7,6 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as NavigationBar from "expo-navigation-bar";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { runOnJS } from "react-native-reanimated";
 import { ThemedView } from "@/components/ThemedView";
 import { PlayerControls } from "@/components/PlayerControls";
 import { EpisodeSelectionModal } from "@/components/EpisodeSelectionModal";
@@ -194,7 +195,35 @@ export default function PlayScreen() {
   }, [deviceType, tvRemoteHandler, setShowControls, showControls]);
 
   // ---- 触摸手势：单击切换控制条 / 双击播放暂停 / 长按 2 倍速 ----
+  // 注意：安装了 Reanimated 时，RNGH 手势回调在 UI 线程以 worklet 执行，
+  // 任何 JS 线程操作（Zustand setState / Toast 等）必须通过 runOnJS 回到 JS 线程，
+  // 否则会触发 "undefined is not a function" 的 runWorklet 崩溃。
   const previousRateRef = useRef<number>(1.0);
+
+  const toggleControlsOnJS = useCallback(() => {
+    const { showControls: sc, setShowControls: ssc } = usePlayerStore.getState();
+    ssc(!sc);
+  }, []);
+
+  const togglePlayPauseOnJS = useCallback(() => {
+    usePlayerStore.getState().togglePlayPause();
+  }, []);
+
+  const startSpeedBoostOnJS = useCallback(() => {
+    const state = usePlayerStore.getState();
+    previousRateRef.current = state.playbackRate;
+    if (state.playbackRate !== 2.0) {
+      state.setPlaybackRate(2.0);
+      Toast.show({ type: "info", text1: "2 倍速播放中", visibilityTime: 1200 });
+    }
+  }, []);
+
+  const endSpeedBoostOnJS = useCallback(() => {
+    const state = usePlayerStore.getState();
+    if (state.playbackRate === 2.0 && previousRateRef.current !== 2.0) {
+      state.setPlaybackRate(previousRateRef.current);
+    }
+  }, []);
 
   const singleTap = useMemo(
     () =>
@@ -202,10 +231,9 @@ export default function PlayScreen() {
         .numberOfTaps(1)
         .maxDuration(250)
         .onEnd(() => {
-          const { showControls: sc, setShowControls: ssc } = usePlayerStore.getState();
-          ssc(!sc);
+          runOnJS(toggleControlsOnJS)();
         }),
-    []
+    [toggleControlsOnJS]
   );
 
   const doubleTap = useMemo(
@@ -214,9 +242,9 @@ export default function PlayScreen() {
         .numberOfTaps(2)
         .maxDuration(250)
         .onEnd(() => {
-          usePlayerStore.getState().togglePlayPause();
+          runOnJS(togglePlayPauseOnJS)();
         }),
-    []
+    [togglePlayPauseOnJS]
   );
 
   const longPress = useMemo(
@@ -224,20 +252,12 @@ export default function PlayScreen() {
       Gesture.LongPress()
         .minDuration(300)
         .onStart(() => {
-          const state = usePlayerStore.getState();
-          previousRateRef.current = state.playbackRate;
-          if (state.playbackRate !== 2.0) {
-            state.setPlaybackRate(2.0);
-            Toast.show({ type: "info", text1: "2 倍速播放中", visibilityTime: 1200 });
-          }
+          runOnJS(startSpeedBoostOnJS)();
         })
         .onFinalize(() => {
-          const state = usePlayerStore.getState();
-          if (state.playbackRate === 2.0 && previousRateRef.current !== 2.0) {
-            state.setPlaybackRate(previousRateRef.current);
-          }
+          runOnJS(endSpeedBoostOnJS)();
         }),
-    []
+    [startSpeedBoostOnJS, endSpeedBoostOnJS]
   );
 
   const composedGestures = useMemo(
