@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Modal, FlatList } from "react-native";
+import { View, Text, StyleSheet, Modal, FlatList, Pressable } from "react-native";
 import { StyledButton } from "./StyledButton";
 import usePlayerStore from "@/stores/playerStore";
 
@@ -33,8 +33,15 @@ export const SpeedSelectionModal: React.FC = () => {
   return (
     <Modal visible={showSpeedModal} transparent={true} animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalContainer}>
+        {/* 点击面板外的屏幕区域即可关闭，返回播放页 */}
+        <Pressable style={styles.backdrop} onPress={onClose} android_disableSound />
         <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>播放速度</Text>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>播放速度</Text>
+            <Pressable onPress={onClose} style={styles.closeButton} hitSlop={16}>
+              <Text style={styles.closeButtonText}>✕</Text>
+            </Pressable>
+          </View>
           <FlatList
             data={SPEED_OPTIONS}
             numColumns={3}
@@ -64,18 +71,42 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     backgroundColor: "transparent",
   },
+  // 透明遮罩：占满右侧面板之外的区域，点击即关闭
+  backdrop: {
+    flex: 1,
+  },
   modalContent: {
     width: 500,
     height: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.85)",
     padding: 20,
   },
-  modalTitle: {
-    color: "white",
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
+  },
+  modalTitle: {
+    flex: 1,
+    color: "white",
     textAlign: "center",
     fontSize: 18,
     fontWeight: "bold",
+    marginLeft: 24, // 与右侧关闭按钮对称，保持标题居中
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+  },
+  closeButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+    lineHeight: 20,
   },
   speedList: {
     justifyContent: "flex-start",

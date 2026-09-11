@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OrionTV is a React Native TVOS application for streaming video content, built with Expo and designed specifically for TV platforms (Apple TV and Android TV). This is a frontend-only application that connects to external APIs and includes a built-in remote control server for external device control.
 
-> 本仓库为个人定制分支（`custom`），默认 API 地址内置为 `https://tv.668664.xyz`；定制内容包括：播放页自动横屏、沉浸式隐藏状态栏、双击暂停/长按 2 倍速手势、可拖动进度条、精简五键控制条（手机 16:10 紧凑布局）、页面切换动效、登录弹窗注册功能、设置页用户管理卡片（改密码/改用户名）。推送到 `custom` 分支后由 GitHub Actions 自动构建 APK 并发布 Release。
+> 本仓库为个人定制分支（`custom`），默认 API 地址内置为 `https://tv.668664.xyz`；定制内容包括：播放页自动横屏、沉浸式隐藏状态栏、双击暂停/长按 2 倍速手势、可拖动进度条、精简五键控制条（手机 16:10 紧凑布局）、页面切换动效、登录弹窗注册功能、设置页用户管理卡片（改密码/改用户名）、播放页弹窗点击屏幕空白处关闭、设置页登录/注册/退出登录入口。推送到 `custom` 分支后由 GitHub Actions 自动构建 APK 并发布 Release。
+>
+> 当前版本 **v1.5.0**（版本号来源：`package.json` 的 `version`，`app.json` 的 `expo.version` / `expo.android.versionCode` 供 prebuild 生成原生版本号；更新检查逻辑见 `services/updateService.ts`，远程版本取自 `custom` 分支的 `package.json`）。
 
 ## Key Commands
 
@@ -104,6 +106,9 @@ This project uses a TV-first approach with responsive adaptations:
 - Test on both TV devices (Apple TV/Android TV) and responsive mobile/tablet layouts
 - All API calls are centralized in `/services` directory with error handling
 - Storage operations use AsyncStorage wrapper in `storage.ts` with typed interfaces
+- **RNGH 手势回调必须经 `runOnJS`**：本项目安装了 Reanimated（`babel-preset-expo` 自动注入插件），`react-native-gesture-handler` 的手势回调（`onEnd` / `onStart` / `onFinalize`）会在 **UI 线程以 worklet 执行**。回调中直接调用 Zustand action、`Toast.show` 等 JS 线程方法会导致 `com.facebook.jni.CppException: undefined is not a function`（`runWorklet`）而**闪退**。正确写法：`import { runOnJS } from "react-native-reanimated"`，在回调里写 `runOnJS(jsFn)()`，并把 `jsFn` 放进手势 `useMemo` 的依赖数组。
+- **播放页弹窗关闭**：`EpisodeSelectionModal` / `SpeedSelectionModal` / `SourceSelectionModal` 均为右侧面板 + 透明遮罩结构，遮罩（`styles.backdrop`，`flex: 1`）与右上角 ✕ 都绑定 `onClose`；新增同类弹窗时保持该结构以便点击屏幕即可返回。
+- **登录弹窗显示规则**：`LoginModal` 全局挂载于 `app/_layout.tsx`，设置页默认不主动弹出（`isSettingsPage`）。若需在设置页手动唤起（如「用户管理」中的登录/注册入口），调用 `useAuthStore.showLoginModal(mode)`，它会置 `isLoginModalManuallyOpened = true` 与 `loginModalInitialMode`，从而突破该限制。
 
 ### Component Development Patterns
 

@@ -7,6 +7,10 @@ import Logger from "@/utils/Logger";
 
 const logger = Logger.withTag('SettingsStore');
 
+// 应用启动时先把内置默认地址写入 API 单例，避免首页首帧请求早于 loadSettings()
+// 完成而抛出 API_URL_NOT_SET（表现为首页提示“请配置服务器地址”且不弹登录框）。
+api.setBaseUrl(DEFAULT_API_BASE_URL);
+
 interface SettingsState {
   apiBaseUrl: string;
   m3uUrl: string;

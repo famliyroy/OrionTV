@@ -12,7 +12,13 @@ import { ThemedText } from "./ThemedText";
 import { StyledButton } from "./StyledButton";
 
 const LoginModal = () => {
-  const { isLoginModalVisible, hideLoginModal, checkLoginStatus } = useAuthStore();
+  const {
+    isLoginModalVisible,
+    isLoginModalManuallyOpened,
+    loginModalInitialMode,
+    hideLoginModal,
+    checkLoginStatus,
+  } = useAuthStore();
   const { serverConfig, apiBaseUrl } = useSettingsStore();
   const { refreshPlayRecords } = useHomeStore();
   const [username, setUsername] = useState("");
@@ -24,12 +30,17 @@ const LoginModal = () => {
   const passwordInputRef = useRef<TextInput>(null);
   const pathname = usePathname();
   const isSettingsPage = pathname.includes("settings");
+  // 设置页默认不主动弹登录框，但用户在设置页主动点击「登录/注册」时可以弹出
+  const shouldShowModal = isLoginModalVisible && (!isSettingsPage || isLoginModalManuallyOpened);
 
   const [isModalReady, setIsModalReady] = useState(false);
 
   // Load saved credentials when modal opens
   useEffect(() => {
-    if (isLoginModalVisible && !isSettingsPage) {
+    if (shouldShowModal) {
+      // 主动打开时按入口决定初始模式（登录 / 注册）
+      setMode(loginModalInitialMode);
+
       // 先确保键盘状态清理
       Keyboard.dismiss();
 
@@ -52,11 +63,11 @@ const LoginModal = () => {
         setIsModalReady(false);
       };
     }
-  }, [isLoginModalVisible, isSettingsPage]);
+  }, [shouldShowModal, loginModalInitialMode]);
 
   // Focus management with better TV remote handling
   useEffect(() => {
-    if (isModalReady && isLoginModalVisible && !isSettingsPage) {
+    if (isModalReady && shouldShowModal) {
       const isUsernameVisible = serverConfig?.StorageType !== "localstorage";
 
       // Use a small delay to ensure the modal is fully rendered
@@ -70,7 +81,7 @@ const LoginModal = () => {
 
       return () => clearTimeout(focusTimeout);
     }
-  }, [isModalReady, isLoginModalVisible, serverConfig, isSettingsPage]);
+  }, [isModalReady, shouldShowModal, serverConfig]);
 
   // 清理 effect - 确保 Modal 关闭时清理所有状态
   useEffect(() => {
@@ -166,7 +177,7 @@ const LoginModal = () => {
   return (
     <Modal
       transparent={true}
-      visible={isLoginModalVisible && !isSettingsPage}
+      visible={shouldShowModal}
       animationType="fade"
       onRequestClose={hideLoginModal}
     >

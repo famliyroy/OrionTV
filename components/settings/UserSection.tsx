@@ -13,12 +13,14 @@ import Logger from "@/utils/Logger";
 const logger = Logger.withTag("UserSection");
 
 /**
- * 用户管理卡片：显示当前登录用户，支持修改密码与修改用户名。
+ * 用户管理卡片：显示当前登录用户，支持登录/注册、退出登录、修改密码与修改用户名。
+ * 登录/注册：用于首页未主动弹出登录框时，手动进入登录或注册；
+ * 退出登录：清除登录态与本地凭据，随后直接弹出登录框，方便切换账号；
  * 修改密码依赖服务端 /api/change-password 接口；
  * 修改用户名依赖服务端 /api/change-username 接口（如服务端不支持会给出提示）。
  */
 export const UserSection: React.FC = () => {
-  const { isLoggedIn } = useAuthStore();
+  const { isLoggedIn, showLoginModal, logout } = useAuthStore();
   const { serverConfig } = useSettingsStore();
 
   const [currentUsername, setCurrentUsername] = useState<string>("");
@@ -27,6 +29,7 @@ export const UserSection: React.FC = () => {
   const [newUsername, setNewUsername] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isChangingUsername, setIsChangingUsername] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // localstorage 模式没有用户体系，不展示
   const isLocalStorage = serverConfig?.StorageType === "localstorage";
@@ -107,6 +110,27 @@ export const UserSection: React.FC = () => {
     }
   };
 
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logout();
+      // 清除本地保存的凭据，避免下次登录自动填入上一个账号
+      await LoginCredentialsManager.clear();
+      setCurrentUsername("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setNewUsername("");
+      Toast.show({ type: "success", text1: "已退出登录" });
+      // 退出后直接打开登录弹窗，方便切换到其他账号
+      showLoginModal("login");
+    } catch (error) {
+      logger.error("Failed to logout:", error);
+      Toast.show({ type: "error", text1: "退出登录失败", text2: "请稍后重试" });
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   return (
     <SettingsSection>
       <View style={styles.container}>
@@ -119,51 +143,81 @@ export const UserSection: React.FC = () => {
           </ThemedText>
         </View>
 
+        {/* 账号操作：未登录时可手动登录/注册；已登录时可退出登录 */}
         <View style={styles.group}>
-          <ThemedText style={styles.groupTitle}>修改密码</ThemedText>
-          <TextInput
-            style={styles.input}
-            placeholder="新密码"
-            placeholderTextColor="#888"
-            secureTextEntry
-            value={newPassword}
-            onChangeText={setNewPassword}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="确认新密码"
-            placeholderTextColor="#888"
-            secureTextEntry
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-          />
-          <StyledButton
-            text={isChangingPassword ? "提交中..." : "修改密码"}
-            onPress={handleChangePassword}
-            disabled={isChangingPassword || !isLoggedIn}
-            variant="primary"
-            style={styles.actionButton}
-          />
+          <ThemedText style={styles.groupTitle}>{isLoggedIn ? "账号操作" : "登录 / 注册"}</ThemedText>
+          {isLoggedIn ? (
+            <StyledButton
+              text={isLoggingOut ? "退出中..." : "退出登录"}
+              onPress={handleLogout}
+              disabled={isLoggingOut}
+              style={styles.actionButton}
+            />
+          ) : (
+            <View style={styles.buttonRow}>
+              <StyledButton
+                text="登录"
+                onPress={() => showLoginModal("login")}
+                style={styles.actionButton}
+              />
+              <StyledButton
+                text="注册账号"
+                onPress={() => showLoginModal("register")}
+                style={styles.actionButton}
+              />
+            </View>
+          )}
         </View>
 
-        <View style={styles.group}>
-          <ThemedText style={styles.groupTitle}>修改用户名</ThemedText>
-          <TextInput
-            style={styles.input}
-            placeholder="新用户名"
-            placeholderTextColor="#888"
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={newUsername}
-            onChangeText={setNewUsername}
-          />
-          <StyledButton
-            text={isChangingUsername ? "提交中..." : "修改用户名"}
-            onPress={handleChangeUsername}
-            disabled={isChangingUsername || !isLoggedIn}
-            style={styles.actionButton}
-          />
-        </View>
+        {/* 以下两项仅在已登录时展示 */}
+        {isLoggedIn && (
+          <>
+            <View style={styles.group}>
+              <ThemedText style={styles.groupTitle}>修改密码</ThemedText>
+              <TextInput
+                style={styles.input}
+                placeholder="新密码"
+                placeholderTextColor="#888"
+                secureTextEntry
+                value={newPassword}
+                onChangeText={setNewPassword}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="确认新密码"
+                placeholderTextColor="#888"
+                secureTextEntry
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+              />
+              <StyledButton
+                text={isChangingPassword ? "提交中..." : "修改密码"}
+                onPress={handleChangePassword}
+                disabled={isChangingPassword}
+                variant="primary"
+                style={styles.actionButton}
+              />
+            </View>
+            <View style={styles.group}>
+              <ThemedText style={styles.groupTitle}>修改用户名</ThemedText>
+              <TextInput
+                style={styles.input}
+                placeholder="新用户名"
+                placeholderTextColor="#888"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={newUsername}
+                onChangeText={setNewUsername}
+              />
+              <StyledButton
+                text={isChangingUsername ? "提交中..." : "修改用户名"}
+                onPress={handleChangeUsername}
+                disabled={isChangingUsername}
+                style={styles.actionButton}
+              />
+            </View>
+          </>
+        )}
       </View>
     </SettingsSection>
   );
@@ -216,5 +270,10 @@ const styles = StyleSheet.create({
     height: 44,
     alignSelf: "flex-start",
     minWidth: 140,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
   },
 });

@@ -10,7 +10,12 @@ const logger = Logger.withTag('AuthStore');
 interface AuthState {
   isLoggedIn: boolean;
   isLoginModalVisible: boolean;
-  showLoginModal: () => void;
+  /** 用户主动打开登录弹窗（例如从设置页的用户管理进入）。
+   *  该标记为 true 时，即使在设置页也允许弹出登录弹窗。 */
+  isLoginModalManuallyOpened: boolean;
+  /** 主动打开登录弹窗时的初始模式（登录 / 注册） */
+  loginModalInitialMode: "login" | "register";
+  showLoginModal: (mode?: "login" | "register") => void;
   hideLoginModal: () => void;
   checkLoginStatus: (apiBaseUrl?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -19,8 +24,11 @@ interface AuthState {
 const useAuthStore = create<AuthState>((set) => ({
   isLoggedIn: false,
   isLoginModalVisible: false,
-  showLoginModal: () => set({ isLoginModalVisible: true }),
-  hideLoginModal: () => set({ isLoginModalVisible: false }),
+  isLoginModalManuallyOpened: false,
+  loginModalInitialMode: "login",
+  showLoginModal: (mode: "login" | "register" = "login") =>
+    set({ isLoginModalVisible: true, isLoginModalManuallyOpened: true, loginModalInitialMode: mode }),
+  hideLoginModal: () => set({ isLoginModalVisible: false, isLoginModalManuallyOpened: false }),
   checkLoginStatus: async (apiBaseUrl?: string) => {
     if (!apiBaseUrl) {
       set({ isLoggedIn: false, isLoginModalVisible: false });

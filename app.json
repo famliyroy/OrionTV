@@ -67,7 +67,8 @@
             "android.intent.category.DEFAULT"
           ]
         }
-      ]
+      ],
+      "versionCode": 2
     },
     "ios": {
       "bundleIdentifier": "com.oriontv",
@@ -91,6 +92,7 @@
       "eas": {
         "projectId": "b4eddfdb-08cb-4ffc-828d-a27f493e10f7"
       }
-    }
+    },
+    "version": "1.5.0"
   }
 }
