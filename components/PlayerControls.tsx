@@ -1,6 +1,7 @@
-import React, { useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, PanResponder } from "react-native";
-import { Pause, Play, SkipBack, SkipForward, List, Gauge } from "lucide-react-native";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { View, Text, StyleSheet, PanResponder, Pressable } from "react-native";
+import { Pause, Play, SkipBack, SkipForward, List, Gauge, ArrowLeft } from "lucide-react-native";
+import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/ThemedText";
 import { MediaButton } from "@/components/MediaButton";
 
@@ -33,6 +34,17 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
   const { deviceType } = useResponsiveLayout();
   const isMobile = deviceType === "mobile";
   const isTablet = deviceType === "tablet";
+  const router = useRouter();
+
+  // ---- 返回上一级 ----
+  const [isBackFocused, setIsBackFocused] = useState(false);
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/");
+    }
+  }, [router]);
 
   const videoTitle = detail?.title || "";
   const currentEpisode = episodes[currentEpisodeIndex];
@@ -111,12 +123,12 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
   // 紧凑尺寸：按手机 16:10 横屏优化
   const sizes = useMemo(() => {
     if (isMobile) {
-      return { icon: 20, buttonPadding: 6, gap: 6, overlayPaddingH: 12, overlayPaddingV: 6, title: 13, time: 11, barHeight: 4, thumb: 12, marginTop: 6 };
+      return { icon: 20, buttonPadding: 6, gap: 6, overlayPaddingH: 12, overlayPaddingV: 6, title: 13, time: 11, barHeight: 4, thumb: 12, marginTop: 6, back: 34 };
     }
     if (isTablet) {
-      return { icon: 22, buttonPadding: 8, gap: 8, overlayPaddingH: 16, overlayPaddingV: 10, title: 15, time: 12, barHeight: 6, thumb: 14, marginTop: 8 };
+      return { icon: 22, buttonPadding: 8, gap: 8, overlayPaddingH: 16, overlayPaddingV: 10, title: 15, time: 12, barHeight: 6, thumb: 14, marginTop: 8, back: 38 };
     }
-    return { icon: 24, buttonPadding: 10, gap: 10, overlayPaddingH: 20, overlayPaddingV: 14, title: 16, time: 13, barHeight: 8, thumb: 16, marginTop: 12 };
+    return { icon: 24, buttonPadding: 10, gap: 10, overlayPaddingH: 20, overlayPaddingV: 14, title: 16, time: 13, barHeight: 8, thumb: 16, marginTop: 12, back: 42 };
   }, [isMobile, isTablet]);
 
   return (
@@ -127,9 +139,30 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
       ]}
     >
       <View style={styles.topControls}>
+        {/* 返回上一级：点击返回详情页 */}
+        <Pressable
+          focusable
+          onPress={handleBack}
+          onFocus={() => setIsBackFocused(true)}
+          onBlur={() => setIsBackFocused(false)}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="返回"
+          style={[
+            styles.backButton,
+            { width: sizes.back, height: sizes.back, borderRadius: sizes.back / 2 },
+            isBackFocused && styles.backButtonFocused,
+          ]}
+        >
+          <ArrowLeft color="white" size={Math.round(sizes.back * 0.55)} />
+        </Pressable>
+
         <Text style={[styles.controlTitle, { fontSize: sizes.title }]} numberOfLines={1}>
           {videoTitle} {currentEpisodeTitle ? `- ${currentEpisodeTitle}` : ""}
         </Text>
+
+        {/* 右侧等宽占位，保证标题视觉居中 */}
+        <View style={{ width: sizes.back }} />
       </View>
 
       <View style={styles.bottomControlsContainer}>
@@ -214,6 +247,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  backButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.25)",
+  },
+  backButtonFocused: {
+    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    borderColor: "#ffffff",
   },
   controlTitle: {
     color: "white",
