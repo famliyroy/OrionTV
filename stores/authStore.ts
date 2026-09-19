@@ -15,6 +15,12 @@ interface AuthState {
   isLoginModalManuallyOpened: boolean;
   /** 主动打开登录弹窗时的初始模式（登录 / 注册） */
   loginModalInitialMode: "login" | "register";
+  /**
+   * Chrome Custom Tab 人机验证回传的 Turnstile token（oriontv://turnstile?token=... 深链写入）。
+   * 令牌一次性有效，消费方（LoginModal）取用后必须置回 null。
+   */
+  turnstileCallbackToken: string | null;
+  setTurnstileCallbackToken: (token: string | null) => void;
   showLoginModal: (mode?: "login" | "register") => void;
   hideLoginModal: () => void;
   checkLoginStatus: (apiBaseUrl?: string) => Promise<void>;
@@ -26,6 +32,8 @@ const useAuthStore = create<AuthState>((set) => ({
   isLoginModalVisible: false,
   isLoginModalManuallyOpened: false,
   loginModalInitialMode: "login",
+  turnstileCallbackToken: null,
+  setTurnstileCallbackToken: (token) => set({ turnstileCallbackToken: token }),
   showLoginModal: (mode: "login" | "register" = "login") =>
     set({ isLoginModalVisible: true, isLoginModalManuallyOpened: true, loginModalInitialMode: mode }),
   hideLoginModal: () => set({ isLoginModalVisible: false, isLoginModalManuallyOpened: false }),

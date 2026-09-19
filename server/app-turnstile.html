@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人机验证 - OrionTV</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0f1115; min-height: 100vh; }
+  body { display: flex; align-items: center; justify-content: center; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .card { background: #1a1d24; border-radius: 12px; padding: 32px 24px; max-width: 360px; width: 86%; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  h1 { color: #eee; font-size: 18px; margin: 0 0 6px; }
+  .sub { color: #888; font-size: 13px; margin-bottom: 20px; }
+  #ts-box { display: flex; justify-content: center; min-height: 65px; }
+  #msg { margin-top: 16px; font-size: 13px; min-height: 20px; color: #e5a04c; word-break: break-all; }
+  #retry { margin-top: 12px; display: none; background: #2a2f3a; color: #ddd; border: 1px solid #444; border-radius: 8px; padding: 8px 20px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>人机验证</h1>
+  <div class="sub">验证完成后将自动返回 OrionTV</div>
+  <div id="ts-box"></div>
+  <div id="msg">正在加载验证组件…</div>
+  <button id="retry" onclick="location.reload()">刷新重试</button>
+</div>
+<script>
+(function () {
+  var msg = document.getElementById('msg');
+  var retry = document.getElementById('retry');
+  // sitekey 优先取 URL 参数（App 从 /api/server-config 拿到后传入），
+  // 缺省时尝试从同源 /api/server-config 获取。
+  var sitekey = new URLSearchParams(location.search).get('sitekey');
+
+  function show(text, isErr) {
+    msg.textContent = text;
+    msg.style.color = isErr ? '#e57373' : '#e5a04c';
+    if (isErr) retry.style.display = 'inline-block';
+  }
+
+  function onSolved(token) {
+    msg.textContent = '验证成功，正在返回应用…';
+    msg.style.color = '#81c784';
+    // 深链回传 token，由 App 的 app/turnstile.tsx 路由接收
+    location.href = 'oriontv://turnstile?token=' + encodeURIComponent(token);
+  }
+
+  function onError(code) { show('验证失败(' + code + ')，请点击下方按钮刷新重试', true); }
+  function onExpired() { show('验证已过期，请刷新页面重新验证', true); }
+
+  function loadApi() {
+    var s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__tsOnload';
+    s.async = true;
+    s.onerror = function () { show('验证组件加载失败，请检查网络后刷新', true); };
+    document.head.appendChild(s);
+  }
+
+  window.__tsOnload = function () {
+    try {
+      turnstile.render('#ts-box', {
+        sitekey: sitekey,
+        theme: 'dark',
+        callback: onSolved,
+        'error-callback': onError,
+        'expired-callback': onExpired
+      });
+      msg.textContent = '';
+    } catch (e) {
+      show('验证组件初始化失败，请刷新重试', true);
+    }
+  };
+
+  if (sitekey) { loadApi(); return; }
+  fetch('/api/server-config')
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) {
+      sitekey = cfg && cfg.TurnstileSiteKey;
+      if (sitekey) loadApi();
+      else show('未获取到站点验证配置，请刷新重试', true);
+    })
+    .catch(function () { show('配置加载失败，请检查网络后刷新', true); });
+})();
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Modal, View, TextInput, StyleSheet, ActivityIndicator, Alert, Keyboard, InteractionManager } from "react-native";
 import { usePathname } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import Toast from "react-native-toast-message";
 import useAuthStore from "@/stores/authStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -11,6 +12,15 @@ import { ThemedView } from "./ThemedView";
 import { ThemedText } from "./ThemedText";
 import { StyledButton } from "./StyledButton";
 
+/** 服务器是否以「需要人机验证」拒绝了本次请求（即服务端未配置 APP_AUTH_KEY 豁免） */
+const isTurnstileRequiredError = (message: string) =>
+  message.includes("人机验证") || message.includes("请完成人机验证");
+
+const toOrigin = (raw: string): string => {
+  const matched = /^(https?:\/\/[^/]+)/i.exec(raw || "");
+  return matched ? matched[1] : raw;
+};
+
 const LoginModal = () => {
   const {
     isLoginModalVisible,
@@ -18,6 +28,8 @@ const LoginModal = () => {
     loginModalInitialMode,
     hideLoginModal,
     checkLoginStatus,
+    turnstileCallbackToken,
+    setTurnstileCallbackToken,
   } = useAuthStore();
   const { serverConfig, apiBaseUrl } = useSettingsStore();
   const { refreshPlayRecords } = useHomeStore();
@@ -34,6 +46,51 @@ const LoginModal = () => {
   const shouldShowModal = isLoginModalVisible && (!isSettingsPage || isLoginModalManuallyOpened);
 
   const [isModalReady, setIsModalReady] = useState(false);
+
+  // ---- Cloudflare Turnstile 人机验证（Chrome Custom Tab 方案）----
+  // MoonTVPlus 服务端可通过 LoginRequireTurnstile / RegistrationRequireTurnstile 开启校验。
+  // Android WebView 内置 Turnstile 不可行（系统 WebView 强制附加 X-Requested-With 头，
+  // Cloudflare 必定判 600010），因此改为：登录请求先带 X-App-Auth 头尝试（服务端配置
+  // APP_AUTH_KEY 豁免时直接成功）；被服务端要求验证时，打开服务器 /app-turnstile.html
+  // 验证页（真实浏览器内核），验证成功经 oriontv://turnstile?token= 深链带回 token 后自动重试。
+  const turnstileSiteKey = serverConfig?.TurnstileSiteKey || "";
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [verifyRequired, setVerifyRequired] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const verifyUrl = `${toOrigin(apiBaseUrl)}/app-turnstile.html?sitekey=${encodeURIComponent(turnstileSiteKey)}`;
+
+  // 深链带回 token：消费后自动重试当前模式的登录/注册
+  useEffect(() => {
+    if (turnstileCallbackToken && verifyRequired) {
+      const token = turnstileCallbackToken;
+      setTurnstileCallbackToken(null);
+      setVerifying(false);
+      setTurnstileToken(token);
+      if (mode === "login") {
+        doLogin(token);
+      } else {
+        doRegister(token);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnstileCallbackToken]);
+
+  const openTurnstilePage = async () => {
+    setVerifying(true);
+    try {
+      await WebBrowser.openBrowserAsync(verifyUrl, {
+        toolbarColor: "#000000",
+        showTitle: false,
+      });
+    } catch (error) {
+      setVerifying(false);
+      Toast.show({
+        type: "error",
+        text1: "无法打开浏览器完成验证",
+        text2: "TV 设备请为服务端配置 APP_AUTH_KEY 豁免（见 server/README.md）",
+      });
+    }
+  };
 
   // Load saved credentials when modal opens
   useEffect(() => {
@@ -91,7 +148,7 @@ const LoginModal = () => {
     };
   }, []);
 
-  const handleLogin = async () => {
+  const doLogin = async (tokenOverride?: string) => {
     const isLocalStorage = serverConfig?.StorageType === "localstorage";
     if (!password || (!isLocalStorage && !username)) {
       Toast.show({ type: "error", text1: "请输入用户名和密码" });
@@ -99,7 +156,11 @@ const LoginModal = () => {
     }
     setIsLoading(true);
     try {
-      await api.login(isLocalStorage ? undefined : username, password);
+      await api.login(
+        isLocalStorage ? undefined : username,
+        password,
+        (tokenOverride || turnstileToken) || undefined
+      );
       await checkLoginStatus(apiBaseUrl);
       await refreshPlayRecords();
 
@@ -127,25 +188,33 @@ const LoginModal = () => {
       InteractionManager.runAfterInteractions(hideAndAlert);
 
     } catch (error) {
+      const message = error instanceof Error ? error.message : "用户名或密码错误";
+      if (isTurnstileRequiredError(message)) {
+        // 服务端未配置 APP_AUTH_KEY 豁免：引导用户经浏览器完成验证
+        setVerifyRequired(true);
+        setTurnstileToken("");
+      }
       Toast.show({
         type: "error",
         text1: "登录失败",
-        text2: error instanceof Error ? error.message : "用户名或密码错误",
+        text2: message,
       });
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleLogin = () => doLogin();
+
   // 注册：不限制用户名和密码的字符数与格式，仅需非空
-  const handleRegister = async () => {
+  const doRegister = async (tokenOverride?: string) => {
     if (!username || !password) {
       Toast.show({ type: "error", text1: "请输入用户名和密码" });
       return;
     }
     setIsLoading(true);
     try {
-      await api.register(username, password);
+      await api.register(username, password, (tokenOverride || turnstileToken) || undefined);
       await checkLoginStatus(apiBaseUrl);
       await refreshPlayRecords();
 
@@ -157,20 +226,46 @@ const LoginModal = () => {
       setIsModalReady(false);
       Keyboard.dismiss();
     } catch (error) {
+      const message = error instanceof Error ? error.message : "服务器拒绝了注册请求";
+      if (isTurnstileRequiredError(message)) {
+        setVerifyRequired(true);
+        setTurnstileToken("");
+      }
       Toast.show({
         type: "error",
         text1: "注册失败",
-        text2: error instanceof Error ? error.message : "服务器拒绝了注册请求",
+        text2: message,
       });
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleRegister = () => doRegister();
+
   // Handle navigation between inputs using returnKeyType
   const handleUsernameSubmit = () => {
     passwordInputRef.current?.focus();
   };
+
+  // 主按钮：被服务端要求人机验证且尚未拿到 token 时，点击改为打开浏览器验证页
+  const handlePrimaryPress = () => {
+    if (verifyRequired && !turnstileToken) {
+      openTurnstilePage();
+      return;
+    }
+    return mode === "login" ? handleLogin() : handleRegister();
+  };
+
+  const primaryButtonText = isLoading
+    ? ""
+    : verifyRequired && !turnstileToken
+    ? verifying
+      ? "等待验证完成…"
+      : "打开人机验证"
+    : mode === "login"
+    ? "登录"
+    : "注册";
 
   const isLocalStorageServer = serverConfig?.StorageType === "localstorage";
 
@@ -230,12 +325,27 @@ const LoginModal = () => {
             returnKeyType="go"
             onSubmitEditing={mode === "login" ? handleLogin : handleRegister}
           />
+
+          {/* 服务端要求人机验证（未配置 APP_AUTH_KEY 豁免）时的引导 UI */}
+          {verifyRequired && !turnstileToken && (
+            <View style={styles.verifyBox}>
+              <ThemedText style={styles.verifyHint}>
+                服务器要求人机验证，将跳转到浏览器完成，完成后自动返回并继续{mode === "login" ? "登录" : "注册"}
+              </ThemedText>
+            </View>
+          )}
+          {verifyRequired && !!turnstileToken && (
+            <View style={styles.verifyBox}>
+              <ThemedText style={styles.verifyOk}>人机验证已完成</ThemedText>
+            </View>
+          )}
+
           <StyledButton
-            text={isLoading ? "" : mode === "login" ? "登录" : "注册"}
-            onPress={mode === "login" ? handleLogin : handleRegister}
-            disabled={isLoading}
+            text={primaryButtonText}
+            onPress={handlePrimaryPress}
+            disabled={isLoading || (verifyRequired && !turnstileToken && verifying)}
             style={styles.button}
-            hasTVPreferredFocus={isLocalStorageServer}
+            hasTVPreferredFocus={isLocalStorageServer && !verifyRequired}
           >
             {isLoading && <ActivityIndicator color="#fff" />}
           </StyledButton>
@@ -295,6 +405,21 @@ const styles = StyleSheet.create({
   modeButton: {
     flex: 1,
     height: 44,
+  },
+  verifyBox: {
+    width: "100%",
+    marginBottom: 16,
+  },
+  verifyHint: {
+    fontSize: 13,
+    color: "#e5a04c",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  verifyOk: {
+    fontSize: 13,
+    color: "#4caf50",
+    textAlign: "center",
   },
 });
 
