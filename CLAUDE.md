@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OrionTV is a React Native TVOS application for streaming video content, built with Expo and designed specifically for TV platforms (Apple TV and Android TV). This is a frontend-only application that connects to external APIs and includes a built-in remote control server for external device control.
 
-> 本仓库为个人定制分支（`custom`），默认 API 地址内置为 `https://tv.668664.xyz`；定制内容包括：播放页自动横屏、沉浸式隐藏状态栏、双击暂停/长按 2 倍速手势、可拖动进度条、精简五键控制条（手机 16:10 紧凑布局）、播放页控制条左上角返回按钮、页面切换动效、登录弹窗注册功能、Cloudflare Turnstile 人机验证（服务端开关驱动）、设置页用户管理卡片（改密码/改用户名）、播放页弹窗点击屏幕空白处关闭、设置页登录/注册/退出登录入口。推送到 `custom` 分支后由 GitHub Actions 自动构建 APK 并发布 Release。
+> 本仓库为个人定制分支（`custom`），默认 API 地址内置为 `https://tv.668664.xyz`；定制内容包括：播放页自动横屏、沉浸式隐藏状态栏、双击暂停/长按 2 倍速手势、可拖动进度条、精简五键控制条（手机 16:10 紧凑布局）、播放页控制条左上角返回按钮、页面切换动效、登录弹窗注册功能、设置页用户管理卡片（改密码/改用户名）、播放页弹窗点击屏幕空白处关闭、设置页登录/注册/退出登录入口。推送到 `custom` 分支后由 GitHub Actions 自动构建 APK 并发布 Release。
 >
 > 当前版本 **v1.5.0**（版本号来源：`package.json` 的 `version`，`app.json` 的 `expo.version` / `expo.android.versionCode` 供 prebuild 生成原生版本号；更新检查逻辑见 `services/updateService.ts`，远程版本取自 `custom` 分支的 `package.json`）。
 
@@ -110,10 +110,6 @@ This project uses a TV-first approach with responsive adaptations:
 - **播放页弹窗关闭**：`EpisodeSelectionModal` / `SpeedSelectionModal` / `SourceSelectionModal` 均为右侧面板 + 透明遮罩结构，遮罩（`styles.backdrop`，`flex: 1`）与右上角 ✕ 都绑定 `onClose`；新增同类弹窗时保持该结构以便点击屏幕即可返回。
 - **登录弹窗显示规则**：`LoginModal` 全局挂载于 `app/_layout.tsx`，设置页默认不主动弹出（`isSettingsPage`）。若需在设置页手动唤起（如「用户管理」中的登录/注册入口），调用 `useAuthStore.showLoginModal(mode)`，它会置 `isLoginModalManuallyOpened = true` 与 `loginModalInitialMode`，从而突破该限制。
 - **播放页返回按钮**：位于 `components/PlayerControls.tsx` 顶部控制栏左侧（`styles.backButton`，半透明圆形底 + `ArrowLeft` 图标），`onPress` 调用 `router.back()`（无可返回栈时 `router.replace("/")`）；同行为标题 + 等宽占位 `View`，保证标题视觉居中。随控制条一起显示/隐藏（单击屏幕唤起控制条后可见）。**注意**：`PlayerControls` 只在 `showControls` 为真时渲染，因此该按钮属性天然继承控制条的显隐逻辑；新增顶部按钮时请保留右侧等宽占位以维持标题居中。
-- **Cloudflare Turnstile 人机验证**：服务端（MoonTVPlus）通过 `/api/server-config` 下发 `LoginRequireTurnstile` / `RegistrationRequireTurnstile` / `TurnstileSiteKey`。开启后 `/api/login` 与 `/api/register` 必须携带 `turnstileToken` 字段，否则返回 `400 {"error":"请完成人机验证"}`。客户端双通路（`components/LoginModal.tsx` + `services/api.ts`）：
-  1. **密钥豁免（首选）**：请求固定带 `X-App-Auth` 头（`APP_AUTH_KEY`，须与服务端环境变量一致；服务端补丁与部署说明见 `server/README.md`），豁免生效时登录直接成功、零验证界面；
-  2. **浏览器验证（兜底）**：服务端返回含「人机验证」的 400 时，主按钮变为「打开人机验证」，`expo-web-browser` 打开 `${origin}/app-turnstile.html?sitekey=...`（静态页 `server/app-turnstile.html`，需 Nginx 托管），验证成功页面跳 `oriontv://turnstile?token=...`，由 `app/turnstile.tsx` 写入 `useAuthStore.turnstileCallbackToken`，`LoginModal` 消费后自动重试登录/注册。
-  **严禁回归 WebView 方案**：Android WebView 强制给所有请求附加 `X-Requested-With` 头，Cloudflare 检测到该头必定判 600010；`shouldInterceptRequest` 可剥头但读不到 POST 请求体，纯客户端无解。接口错误文案统一由 `api._fetch` 解析 `{"error": ...}` 后抛出，登录/注册使用 `plainUnauthorized: true`，避免 401 被当作「登录态失效」。
 
 ### Component Development Patterns
 

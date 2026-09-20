@@ -30,7 +30,6 @@
 11. **弹窗点击屏幕关闭**：播放页的「选择剧集 / 播放速度 / 选择播放源」弹窗，点击面板外的屏幕区域或右上角 ✕ 即可关闭返回播放页。
 12. **账号登录/注册/登出**：设置页「用户管理」中新增 登录 / 注册账号 入口（避免首页未弹登录框时无法登录），已登录时提供「退出登录」按钮，退出后自动弹出登录框，方便自行切换账号。
 13. **播放页返回按钮**：播放页控制条左上角新增「←」返回按钮，点击即可返回详情页（TV 端遥控器聚焦时高亮）。
-14. **Cloudflare Turnstile 人机验证**：服务端（MoonTVPlus）开启 `LoginRequireTurnstile` / `RegistrationRequireTurnstile` 后，登录/注册请求自动附带 `X-App-Auth` 密钥头——服务端配置同值 `APP_AUTH_KEY` 环境变量即可**直接豁免验证**（TV 等无浏览器设备的唯一途径，见 `server/README.md`）；服务端未打补丁时，登录被拒后弹窗出现「打开人机验证」按钮，经 Chrome Custom Tab 打开服务器 `/app-turnstile.html` 验证页，验证成功经 `oriontv://turnstile?token=...` 深链带回 token 并自动重试。Android WebView 内置 Turnstile 不可行（系统 WebView 强制附加 `X-Requested-With` 头，Cloudflare 必定判 600010），故不采用。修复了开启该开关后登录/注册一律返回 400「请完成人机验证」的问题。
 
 ## 🛠️ 技术栈
 
@@ -111,12 +110,6 @@ yarn android-tv
 
 ## 🏷️ 版本历史
 
-- **v1.7.0**
-  - 支持 **Cloudflare Turnstile 人机验证**（服务端开关驱动），双通路实现：
-    - **密钥豁免（首选）**：登录/注册请求附带 `X-App-Auth` 头（`services/api.ts` 的 `APP_AUTH_KEY`，须与服务端 `APP_AUTH_KEY` 环境变量一致），服务端打补丁后（改动见 `server/README.md`）直接放行，无任何验证界面；
-    - **浏览器验证（兜底）**：服务端未豁免时，登录被拒后点「打开人机验证」，`expo-web-browser` 打开服务器 `/app-turnstile.html`（静态页，见 `server/`），验证成功经 `oriontv://turnstile?token=...` 深链（路由 `app/turnstile.tsx`）带回 token 自动重试；无浏览器的 TV 设备会提示改用密钥豁免。
-  - 接口错误信息透传：非 2xx 响应会解析服务端返回的 `{"error": "..."}` 并作为提示文案显示（例如「用户名或密码错误」「请完成人机验证」），不再只显示 `HTTP error! status: 400`。
-  - 调研结论：Android WebView 内置 Turnstile 不可行——系统 WebView 给所有请求强制附加 `X-Requested-With` 头，Cloudflare 检测到该头必定判 600010；`shouldInterceptRequest` 虽可剥离该头但无法读取 POST 请求体，纯客户端无解。
 - **v1.6.0**
   - 播放页控制条左上角新增 **返回按钮**（←，半透明圆形底 + 白色箭头），点击直接返回上一级（详情页）；控制条右侧加等宽占位，标题保持视觉居中；TV 端遥控器聚焦时高亮。
 - **v1.5.0**
