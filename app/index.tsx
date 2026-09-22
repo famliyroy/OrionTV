@@ -25,7 +25,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import type { LucideIcon } from 'lucide-react-native';
 import {
@@ -90,16 +90,6 @@ export default function HomeScreen() {
 
   const [layout, setLayout] = useState<HomeLayoutSettings | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    void loadHomeLayout().then((l) => {
-      if (alive) setLayout(l);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const homeQuery = useQuery({
     queryKey: qk.home(),
     queryFn: () => loadHomeData(createDefaultHomeDeps()),
@@ -112,6 +102,29 @@ export default function HomeScreen() {
     enabled: loggedIn,
     staleTime: 60 * 1000,
   });
+
+  /**
+   * 每次**页面获得焦点**都重读布局 + 刷新播放记录。
+   *
+   * 为什么不能只在 mount 时读一次：Stack 导航会把首页一直挂在栈底（不是重新挂载），
+   * 于是从设置页改完"显示继续观看 / 模块顺序"返回时，首页拿的还是旧 `layout` ——
+   * 表现为"改了设置看不到效果，要重启才生效"（真机验证时发现的）。
+   * 播放记录同理：刚看完一集退回来，"继续观看"必须立刻更新。
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      void loadHomeLayout().then((l) => {
+        if (alive) setLayout(l);
+      });
+      if (loggedIn) void recordsQuery.refetch();
+      return () => {
+        alive = false;
+      };
+      // recordsQuery 是稳定引用，不需要进依赖
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loggedIn]),
+  );
 
   /** 继续观看：非 localstorage 存储模式下后端只给最近 10 条 */
   const continueWatching = useMemo(() => {

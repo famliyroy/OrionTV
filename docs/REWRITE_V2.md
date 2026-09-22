@@ -384,7 +384,12 @@ React 判定"快照未缓存" → 无限重渲染，把 JS 线程吃满，所有
 | 弹幕 | 通过 | 自动匹配命中并在画面上渲染（"终于播了x1"、"李沁李沁"…） |
 | 进度上报 | 通过 | `POST /api/playrecords` → `200 {"success":true}`，服务端 `index=1 play_time=26 total_time=2722` |
 | 继续观看 | 通过 | 首页卡片显示"**看到第1集**"（1 基 → 0 基换算正确）+ 进度条 |
+| 设置联动 | 通过 | 关掉"显示继续观看"→ 落盘 `homeContinueWatchingEnabled=false` → 返回首页**模块立即消失**（无需重启；第 6 个修复） |
 | 收藏载荷 | 通过（curl 直验） | `POST /api/favorites` 与 App 构造的 `Favorite` 完全一致 → 200；UI 点击因全屏视频页 dump 失效未能点准，未走通 UI 路径 |
+
+第 6 个修复（本轮最后补的）：首页原先只在 `mount` 时读一次布局，而 Stack 会把首页
+一直挂在栈底 —— 从设置页改完布局返回时看到的是旧值，表现为"改了设置没效果、要重启"。
+改为 `useFocusEffect` 里重读布局 + `refetch` 播放记录（刚看完一集退回来也要立刻更新）。
 
 调试工具沉淀：`work/uihelper.sh`（shot / nodes / tap / text / key / cpu / launch / log）。
 两个必须记住的实现细节：

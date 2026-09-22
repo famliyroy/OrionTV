@@ -65,7 +65,10 @@ jobs:
         with:
           tag_name: v${{ steps.package-version.outputs.version }}
           name: Release v${{ steps.package-version.outputs.version }}
-          body: Automated release for version v${{ steps.package-version.outputs.version }} (custom branch).
+          # 不指定的话 action 默认把 tag 打在**仓库默认分支**上，于是 v2.0.0 的 tag
+          # 指向 master、源代码压缩包与 APK 对不上。这里钉死成实际构建的那个提交。
+          target_commitish: ${{ github.sha }}
+          body: Automated release for version v${{ steps.package-version.outputs.version }} from ${{ github.ref_name }}.
           draft: false
           prerelease: false
           files: artifacts/orionTV.${{ steps.package-version.outputs.version }}.apk
