@@ -22,6 +22,7 @@ import { queryClient } from './query';
 import { apiClient } from '@api/client';
 import { bootstrapCapabilities, hydrateDenied, useCapabilityStore } from './capabilities';
 import { resolveShell, palette, fontSize, spacing, type ShellKind } from './theme';
+import { useShellPrefStore } from './shellPref';
 import { ShellProvider } from '@ui/ShellContext';
 import { AppToast } from '@ui/Toast';
 
@@ -33,6 +34,8 @@ export async function bootstrapApp(): Promise<void> {
     /* 读本地存储失败不致命，用默认站点地址继续 */
   }
   await hydrateDenied();
+  // 壳偏好必须在首屏渲染前读回，否则会先按推断的壳画一帧再跳到覆盖的壳（明显闪一下）
+  await useShellPrefStore.getState().hydrate();
   await useCapabilityStore.getState().load();
 }
 
@@ -44,7 +47,12 @@ export interface AppProvidersProps {
 
 export function AppProviders({ children, shellOverride = 'auto' }: AppProvidersProps) {
   const [ready, setReady] = useState(false);
-  const shell = useMemo(() => resolveShell(shellOverride), [shellOverride]);
+  // 偏好 > 显式 prop > 设备推断（设置页里改完立刻生效，无需重启）
+  const pref = useShellPrefStore((s) => s.pref);
+  const shell = useMemo(
+    () => resolveShell(pref !== 'auto' ? pref : shellOverride),
+    [pref, shellOverride],
+  );
 
   useEffect(() => {
     let alive = true;

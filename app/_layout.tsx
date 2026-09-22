@@ -20,6 +20,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { AppProviders } from '@core/providers';
 import { palette } from '@core/theme';
+import { AppShell } from '@ui/shell/AppShell';
 
 // 原生启动页先按住，等我们的 BootSplash 可以渲染时再放掉
 void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -34,23 +35,26 @@ export default function RootLayout() {
   return (
     <AppProviders>
       <StatusBar style="light" hidden />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          animation: 'fade',
-          contentStyle: { backgroundColor: palette.bg },
-        }}
-      >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="search" />
-        <Stack.Screen name="detail" />
-        {/* 全屏播放：不要转场动画 */}
-        <Stack.Screen name="play" options={{ animation: 'none' }} />
-        <Stack.Screen name="me" />
-        <Stack.Screen name="login" />
-        <Stack.Screen name="settings" />
-        <Stack.Screen name="+not-found" />
-      </Stack>
+      {/* 三端壳：TV/平板左侧栏、手机底部标签；播放页自动不挂壳 */}
+      <AppShell>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            animation: 'fade',
+            contentStyle: { backgroundColor: palette.bg },
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="search" />
+          <Stack.Screen name="detail" />
+          {/* 全屏播放：不要转场动画 */}
+          <Stack.Screen name="play" options={{ animation: 'none' }} />
+          <Stack.Screen name="me" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="settings" />
+          <Stack.Screen name="+not-found" />
+        </Stack>
+      </AppShell>
     </AppProviders>
   );
 }

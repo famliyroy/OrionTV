@@ -30,6 +30,7 @@ import {
   type HomeModuleId,
 } from '@domain/home';
 import { palette, fontSize, radius, spacing } from '@core/theme';
+import { normalizeShellPref, useShellPrefStore, type ShellPref } from '@core/shellPref';
 
 import { Focusable, Screen, showToast, useShell } from '@ui';
 import { kv, StorageKeys } from '@runtime/storage';
@@ -358,6 +359,11 @@ export default function SettingsScreen() {
         </Text>
       </Section>
 
+      {/* ---------------- 界面 ---------------- */}
+      <Section title="界面">
+        <ShellPrefRow />
+      </Section>
+
       {/* ---------------- 关于 ---------------- */}
       <Section title="关于">
         <InfoRow label="客户端版本" value={`v${APP_VERSION}`} />
@@ -448,6 +454,57 @@ function SwitchRow({
   );
 }
 
+/**
+ * 界面壳选择（调试用）。
+ *
+ * 存在的理由：`resolveShell()` 只能看设备能力，而开发机往往是手机 ——
+ * 于是"TV 左侧栏长什么样、播放页有没有误挂壳"在拿到 TV 盒子之前在本地根本看不到。
+ */
+const SHELL_OPTIONS: readonly { value: ShellPref; label: string; hint: string }[] = [
+  { value: 'auto', label: '自动', hint: '按设备推断' },
+  { value: 'phone', label: '手机', hint: '底部标签栏' },
+  { value: 'tablet', label: '平板', hint: '左侧窄栏（仅图标）' },
+  { value: 'tv', label: 'TV', hint: '左侧导航栏' },
+];
+
+function ShellPrefRow() {
+  const { scaled, shell } = useShell();
+  const pref = useShellPrefStore((s) => s.pref);
+  const setPref = useShellPrefStore((s) => s.setPref);
+  const current = SHELL_OPTIONS.find((o) => o.value === normalizeShellPref(pref));
+
+  return (
+    <>
+      <View style={styles.btnRow}>
+        {SHELL_OPTIONS.map((opt) => (
+          <Focusable
+            key={opt.value}
+            onPress={() => void setPref(opt.value)}
+            style={styles.btn}
+            testID={`setting-shell-${opt.value}`}
+          >
+            {({ focused }) => (
+              <View
+                style={[
+                  styles.btnInner,
+                  pref === opt.value ? styles.btnActive : null,
+                  focused ? styles.btnFocused : null,
+                ]}
+              >
+                <Text style={[styles.btnText, { fontSize: scaled(fontSize.small) }]}>{opt.label}</Text>
+              </View>
+            )}
+          </Focusable>
+        ))}
+      </View>
+      <Text style={[styles.hint, { fontSize: scaled(fontSize.caption) }]}>
+        当前生效：{shell}（{current?.hint ?? '按设备推断'}）。覆盖只改布局与字号，
+        改不了物理输入方式 —— 焦点移动仍要在真 TV 上验证。
+      </Text>
+    </>
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   const { scaled } = useShell();
   return (
@@ -508,6 +565,9 @@ const styles = StyleSheet.create({
   },
   btnFocused: {
     backgroundColor: palette.bgCardHover,
+  },
+  btnActive: {
+    backgroundColor: palette.primaryDim,
   },
   btnText: {
     color: palette.text,

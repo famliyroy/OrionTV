@@ -1,6 +1,6 @@
 # OrionTV 原生客户端 v2 重构说明
 
-> 分支：`rewrite/v2`　目标版本：**v2.0.0**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
+> 分支：`rewrite/v2`　当前版本：**v2.0.1**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
 >
 > `custom` 分支保持 v1.6.0 可发布状态不动，本分支是**重建**而非增量修改。
 
@@ -56,12 +56,40 @@ src/
 │   └── panels/          选集 / 弹幕 / 设置三个侧栏面板
 ├── runtime/storage.ts   存储抽象（KVStore）+ 与 Web 端逐字对齐的键名表
 └── ui/                  L1 通用组件层（Focusable / VideoCard / Screen …）
+    └── shell/           三端壳：AppShell + navItems（见 §2.1）
 
 packages/danmaku/        弹幕引擎（从上游 DFM Rust 源码移植，独立可测）
 ```
 
 **依赖方向是单向的**：`app → player/ui → domain → api → runtime`。
 `domain` 不许 import `api`，`ui` 不许 import `api`，`player` 不许 import `app`。
+
+### 2.1 三端壳（M01）
+
+壳挂在 `<Stack>` **外面**（`app/_layout.tsx` 里 `AppShell` 包住 `Stack`）：
+
+```
+tv      →  [左侧竖向导航栏] [Stack 内容区]      图标 + 文字，88×scale 宽
+tablet  →  [左侧窄栏]       [Stack 内容区]      仅图标，72 宽
+phone   →  [Stack 内容区]   [底部标签栏]        4 等分，56dp + 底部安全区
+play    →  不挂壳（全屏沉浸）
+```
+
+三条设计约束：
+
+1. **壳必须在 Stack 之外**：Stack 的每个路由是独立屏幕，若让页面自己画侧栏，
+   转场时侧栏会卸载重挂 —— TV 上表现为"焦点丢失 + 侧栏闪一下"。
+2. **切页签用 `router.replace`**：壳导航是"切页签"而不是"进下一层"，
+   用 `push` 在四个页签间来回点会把栈堆到十几层，返回键要按很多次。
+3. **沉浸路由不挂壳**：`/play` 放侧栏既挡画面又会被遥控器误聚焦。
+
+`navItems.ts` 是纯数据 + 纯函数（`activeNavKey` / `isImmersiveRoute`），有单测 ——
+路由匹配写错在 TV 上表现为"人在首页、侧栏却高亮搜索"，肉眼极难发现。
+
+**界面壳可手动覆盖**（`src/core/shellPref.ts`，落盘键 `oriontv.shellOverride`）：
+开发机通常是手机，`resolveShell()` 只会返回 `phone`，于是"TV 侧栏长什么样、
+播放页有没有误挂壳"在拿到 TV 盒子之前完全看不到。设置页 → 界面 → 自动/手机/平板/TV。
+注意它只改**布局与字号**，改不了物理输入方式，焦点移动仍要在真 TV 上验证。
 
 ---
 
@@ -405,12 +433,29 @@ node scripts/contract-smoke.mjs
 BASE=https://tv.668664.xyz USER=wbtest01 PASS=wbtest123 node scripts/contract-smoke.mjs
 ```
 
+### 9.3 发布：tag 指向必须核对
+
+本仓库是 fork，**上游的 Release 与 tag 一并被继承**：`v1.4.0 / v1.5.0 / v1.6.0 / v2.0.0`
+都创建于 2026-02-05，tag 指向上游 master 的老提交 `619901ef`（1.3.13）。
+CI 的 `softprops/action-gh-release` 在 Release **已存在**时只替换资源，
+不改 `target_commitish`、不改 body —— 于是"APK 是新的、源码包是 2026 年 2 月的上游代码"。
+
+每次发版后核对（脚本：`work/check_tag.py`）：
+
+```bash
+python work/check_tag.py     # 打印 tag → sha，与 rewrite/v2 分支头比对
+python work/fix_tags.py      # 不一致时：删 tag → 按真实构建提交重建 → 改 body
+```
+
+新版本号（≥ 2.0.1）不会与上游撞车，workflow 已钉死 `target_commitish: ${{ github.sha }}`。
+
 ---
 
 ## 10. 未完成 / P1
 
-- **三端 Shell 组件**：目前靠 `ShellProvider` 的 `metrics` 区分布局（已可用），
-  但还没有独立的 `PhoneShell / TVShell / TabletShell` 布局组件（如 TV 左侧导航栏）。
+- ~~**三端 Shell 组件**~~：v2.0.1 已完成（`src/ui/shell/`，TV 侧栏 / 平板窄栏 / 手机底栏 +
+  沉浸路由 + 可手动覆盖的壳偏好），见 §2.1。**遗留**：只在本机 phone 壳验证过布局，
+  `tv` / `tablet` 两个分支是"强制覆盖 + 截屏"验证的，遥控器方向键的真实焦点路径待真 TV 复验。
 - **AI 问片**：`/api/ai/*` 未接入（L3 层没实现），首页入口已预留但 `ready: false`。
 - **音乐 / 漫画 / 电子书**：后端开关在本站为关，页面属 P1，首页入口同样预留。
 - **管理端**：用户管理、源站管理、去广告规则，属 P1。

@@ -15,7 +15,7 @@ OrionTV is a React Native TVOS application for streaming video content, built wi
 ## ⚠️ v2 重构（`rewrite/v2` 分支）——先读这一节
 
 **从 `rewrite/v2` 分支开始的全部工作，请忽略上面第 9 行描述的那套 v1 目录。**
-v2 是照着后端契约重建的分层实现，版本号 **v2.0.0**，与 v1 **不共享任何模块**。
+v2 是照着后端契约重建的分层实现，版本号 **v2.0.1**，与 v1 **不共享任何模块**。
 
 完整架构说明、实测契约结论、已知偏差见 **[`docs/REWRITE_V2.md`](docs/REWRITE_V2.md)**。
 速览：
@@ -89,6 +89,21 @@ v2 是照着后端契约重建的分层实现，版本号 **v2.0.0**，与 v1 **
     Stack 导航会把首页一直挂在栈底（不是重新挂载），所以从设置页改完
     "显示继续观看 / 模块顺序"返回时，首页拿的还是旧 `layout` ——
     表现为"改了设置看不到效果、要重启才生效"（真机验证时发现的）。
+13. **本仓库是 fork，上游的 Release 与 tag 被一并继承了**（`v1.4.0 / v1.5.0 / v1.6.0 / v2.0.0`
+    都创建于 2026-02-05，tag 全部指向上游 master 的老提交 `619901ef` = 1.3.13）。
+    CI 用 `softprops/action-gh-release` 往**已存在**的 Release 里塞 APK 时，**不会改写
+    `target_commitish` 也不会改 body** —— 结果是 APK 是新的、源码压缩包是 2026 年 2 月的上游代码。
+    发版后必须核对 `git/ref/tags/<tag>` 指向的 sha 是否等于构建它的那个 commit；
+    不对就用 `work/fix_tags.py`（删 tag → 按真实提交重建 → 改 body）修正。
+    新版本号（≥ 2.0.1）不会撞车，workflow 里已钉死 `target_commitish: ${{ github.sha }}`。
+14. **`flex: 1` 的子项放进"没有确定高度"的父容器会塌成 0**。手机底栏一开始写成
+    `SafeAreaView(flex 子项) auto 高度`，结果整条底栏只有 23px、文字被裁掉，
+    截图里看着像"壳根本没渲染"。凡是容器高度靠内容撑（底栏、横向 chip 行）时，
+    必须在最外层钉死高度，内层再 `flex: 1`。见 `src/ui/shell/AppShell.tsx` 的注释。
+15. **本地 AVD 是手机（1080×2340 @440dpi = 393dp）**，`resolveShell()` 会判成 `phone`，
+    所以"TV 侧栏"在本地根本看不到 —— 设置页的**界面壳**（自动/手机/平板/TV）就是为此加的，
+    它把偏好落盘到 `oriontv.shellOverride`。注意它只改布局与字号，**改不了输入方式**，
+    焦点/遥控器行为仍必须在真 TV 上验证。
 
 ---
 

@@ -96,6 +96,9 @@ export const StorageKeys = {
   AUTH_COOKIE: 'oriontv.authCookie',
   LAST_USERNAME: 'oriontv.lastUsername',
 
+  /* 界面壳（auto / phone / tablet / tv）—— 在手机上调试 TV 布局用 */
+  SHELL_OVERRIDE: 'oriontv.shellOverride',
+
   /* 首页排版（对齐 Web 端键名） */
   HOME_MODULES: 'homeModules',
   HOME_BANNER_ENABLED: 'homeBannerEnabled',

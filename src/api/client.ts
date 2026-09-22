@@ -16,7 +16,7 @@ import CookieManager from '@react-native-cookies/cookies';
 import { StorageKeys, kv } from '@runtime/storage';
 import type { AuthInfo, LoginResponse } from './types';
 
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.0.1';
 export const DEFAULT_BASE_URL = 'https://tv.668664.xyz';
 
 /**

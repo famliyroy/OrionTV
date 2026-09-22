@@ -14,6 +14,16 @@ export {
   type ShellProviderProps,
 } from './ShellContext';
 
+/* 壳（三端导航：TV 侧栏 / 平板窄栏 / 手机底栏） */
+export { AppShell, type AppShellProps } from './shell/AppShell';
+export {
+  NAV_ITEMS,
+  IMMERSIVE_ROUTES,
+  activeNavKey,
+  isImmersiveRoute,
+  type NavItem,
+} from './shell/navItems';
+
 /* 基座 */
 export { Screen, type ScreenProps } from './Screen';
 export { Focusable, type FocusableProps, type FocusableState } from './Focusable';
