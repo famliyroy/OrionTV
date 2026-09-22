@@ -1,353 +1,583 @@
-import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, Alert, Platform } from "react-native";
-import { useTVEventHandler } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
-import { StyledButton } from "@/components/StyledButton";
-import { useThemeColor } from "@/hooks/useThemeColor";
-import { useSettingsStore } from "@/stores/settingsStore";
-// import useAuthStore from "@/stores/authStore";
-import { useRemoteControlStore } from "@/stores/remoteControlStore";
-import { APIConfigSection } from "@/components/settings/APIConfigSection";
-import { UserSection } from "@/components/settings/UserSection";
-import { LiveStreamSection } from "@/components/settings/LiveStreamSection";
-import { RemoteInputSection } from "@/components/settings/RemoteInputSection";
-import { UpdateSection } from "@/components/settings/UpdateSection";
-// import { VideoSourceSection } from "@/components/settings/VideoSourceSection";
-import Toast from "react-native-toast-message";
-import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
-import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
-import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
-import { DeviceUtils } from "@/utils/DeviceUtils";
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+/**
+ * 设置中心
+ *
+ * 分五块：服务器 / 首页布局 / 播放偏好 / 弹幕默认值 / 关于。
+ *
+ * 一条重要约束：**改服务器地址会清空登录凭据**（`ApiClient.setBaseUrl` 里做的）。
+ * 历史上这里出过"换了站结果用户还显示登录但其实没有 cookie"的问题，所以保存
+ * 前必须显式告知，而不是静默清空。
+ *
+ * 首页布局是**纯客户端**偏好：后端不存、也不参与渲染，键名与 Web 端
+ * localStorage 逐字对齐（见 `StorageKeys`），这样同一个账号在网页端排好的
+ * 顺序，客户端读到的是同一份语义。
+ */
 
-type SectionItem = {
-  component: React.ReactElement;
-  key: string;
-};
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 
-/** 过滤掉 false/undefined，帮 TypeScript 推断出真正的数组元素类型 */
-function isSectionItem(
-  item: false | undefined | SectionItem
-): item is SectionItem {
-  return !!item;
-}
+import { getServerConfig, peekServerConfig } from '@api/repos/config';
+import { apiClient, APP_VERSION, DEFAULT_BASE_URL } from '@api/client';
+
+import { useAuth } from '@core/useAuth';
+import {
+  loadHomeLayout,
+  moveModule,
+  saveHomeLayout,
+  type BannerHeightScale,
+  type HomeLayoutSettings,
+  type HomeModuleId,
+} from '@domain/home';
+import { palette, fontSize, radius, spacing } from '@core/theme';
+
+import { Focusable, Screen, showToast, useShell } from '@ui';
+import { kv, StorageKeys } from '@runtime/storage';
 
 export default function SettingsScreen() {
-  const { loadSettings, saveSettings, setApiBaseUrl, setM3uUrl } = useSettingsStore();
-  const { lastMessage, targetPage, clearMessage } = useRemoteControlStore();
-  const backgroundColor = useThemeColor({}, "background");
-  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { scaled, metrics } = useShell();
+  const { loggedIn } = useAuth();
 
-  // 响应式布局配置
-  const responsiveConfig = useResponsiveLayout();
-  const commonStyles = getCommonResponsiveStyles(responsiveConfig);
-  const { deviceType, spacing } = responsiveConfig;
+  /* ---------------- 服务器 ---------------- */
 
-  const [hasChanges, setHasChanges] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [currentFocusIndex, setCurrentFocusIndex] = useState(0);
-  const [currentSection, setCurrentSection] = useState<string | null>(null);
-
-  const saveButtonRef = useRef<any>(null);
-  const apiSectionRef = useRef<any>(null);
-  const liveStreamSectionRef = useRef<any>(null);
+  const [baseUrl, setBaseUrl] = useState(() => apiClient.getBaseUrl());
+  const [probing, setProbing] = useState(false);
+  const [server, setServer] = useState(() => peekServerConfig());
 
   useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
+    void getServerConfig(true)
+      .then(setServer)
+      .catch(() => {});
+  }, []);
 
-  useEffect(() => {
-    if (lastMessage && !targetPage) {
-      const realMessage = lastMessage.split("_")[0];
-      handleRemoteInput(realMessage);
-      clearMessage(); // Clear the message after processing
-      markAsChanged();
+  const saveBaseUrl = useCallback(async () => {
+    const next = baseUrl.trim().replace(/\/+$/, '');
+    if (!next) {
+      showToast('地址不能为空', 'error');
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMessage, targetPage]);
-
-  const handleRemoteInput = (message: string) => {
-    // Handle remote input based on currently focused section
-    if (currentSection === "api" && apiSectionRef.current) {
-      // API Config Section
-      setApiBaseUrl(message);
-    } else if (currentSection === "livestream" && liveStreamSectionRef.current) {
-      // Live Stream Section
-      setM3uUrl(message);
+    if (!/^https?:\/\//i.test(next)) {
+      showToast('地址需要以 http:// 或 https:// 开头', 'error');
+      return;
     }
-  };
 
-  const handleSave = async () => {
-    setIsLoading(true);
+    setProbing(true);
     try {
-      await saveSettings();
-      setHasChanges(false);
-      Toast.show({
-        type: "success",
-        text1: "保存成功",
-      });
-    } catch {
-      Alert.alert("错误", "保存设置失败");
+      apiClient.setBaseUrl(next);
+      const cfg = await getServerConfig(true);
+      setServer(cfg);
+      showToast('已切换站点，请重新登录', 'success');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : '站点不可用', 'error');
     } finally {
-      setIsLoading(false);
+      setProbing(false);
     }
-  };
+  }, [baseUrl]);
 
-  const markAsChanged = () => {
-    setHasChanges(true);
-  };
+  const resetBaseUrl = useCallback(() => {
+    setBaseUrl(DEFAULT_BASE_URL);
+    apiClient.setBaseUrl(DEFAULT_BASE_URL);
+    showToast('已恢复默认站点', 'info');
+  }, []);
 
-  // const sections = [
-  //   // 远程输入配置 - 仅在非手机端显示
-  //   deviceType !== "mobile" && {
-  //     component: (
-  //       <RemoteInputSection
-  //         onChanged={markAsChanged}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(0);
-  //           setCurrentSection("remote");
-  //         }}
-  //       />
-  //     ),
-  //     key: "remote",
-  //   },
-  //   {
-  //     component: (
-  //       <APIConfigSection
-  //         ref={apiSectionRef}
-  //         onChanged={markAsChanged}
-  //         hideDescription={deviceType === "mobile"}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(1);
-  //           setCurrentSection("api");
-  //         }}
-  //       />
-  //     ),
-  //     key: "api",
-  //   },
-  //   // 直播源配置 - 仅在非手机端显示
-  //   deviceType !== "mobile" && {
-  //     component: (
-  //       <LiveStreamSection
-  //         ref={liveStreamSectionRef}
-  //         onChanged={markAsChanged}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(2);
-  //           setCurrentSection("livestream");
-  //         }}
-  //       />
-  //     ),
-  //     key: "livestream",
-  //   },
-  //   // {
-  //   //   component: (
-  //   //     <VideoSourceSection
-  //   //       onChanged={markAsChanged}
-  //   //       onFocus={() => {
-  //   //         setCurrentFocusIndex(3);
-  //   //         setCurrentSection("videoSource");
-  //   //       }}
-  //   //     />
-  //   //   ),
-  //   //   key: "videoSource",
-  //   // },
-  //   Platform.OS === "android" && {
-  //     component: <UpdateSection />,
-  //     key: "update",
-  //   },
-  // ].filter(Boolean);
-  const rawSections = [
-    deviceType !== "mobile" && {
-      component: (
-        <RemoteInputSection
-          onChanged={markAsChanged}
-          onFocus={() => {
-            setCurrentFocusIndex(0);
-            setCurrentSection("remote");
-          }}
-        />
-      ),
-      key: "remote",
-    },
-    {
-      component: (
-        <APIConfigSection
-          ref={apiSectionRef}
-          onChanged={markAsChanged}
-          hideDescription={deviceType === "mobile"}
-          onFocus={() => {
-            setCurrentFocusIndex(1);
-            setCurrentSection("api");
-          }}
-        />
-      ),
-      key: "api",
-    },
-    deviceType !== "mobile" && {
-      component: (
-        <LiveStreamSection
-          ref={liveStreamSectionRef}
-          onChanged={markAsChanged}
-          onFocus={() => {
-            setCurrentFocusIndex(2);
-            setCurrentSection("livestream");
-          }}
-        />
-      ),
-      key: "livestream",
-    },
-    {
-      component: <UserSection />,
-      key: "user",
-    },
-    Platform.OS === "android" && {
-      component: <UpdateSection />,
-      key: "update",
-    },
-  ] as const; // 把每个对象都当作字面量保留
-  /** 这里得到的 sections 已经是 SectionItem[]（没有 false） */
-  const sections: SectionItem[] = rawSections.filter(isSectionItem);
+  /* ---------------- 首页布局 ---------------- */
 
+  const [layout, setLayout] = useState<HomeLayoutSettings | null>(null);
 
-  // TV遥控器事件处理 - 仅在TV设备上启用
-  const handleTVEvent = React.useCallback(
-    (event: any) => {
-      if (deviceType !== "tv") return;
+  useEffect(() => {
+    void loadHomeLayout().then(setLayout);
+  }, []);
 
-      if (event.eventType === "down") {
-        const nextIndex = Math.min(currentFocusIndex + 1, sections.length);
-        setCurrentFocusIndex(nextIndex);
-        if (nextIndex === sections.length) {
-          saveButtonRef.current?.focus();
-        }
-      } else if (event.eventType === "up") {
-        const prevIndex = Math.max(currentFocusIndex - 1, 0);
-        setCurrentFocusIndex(prevIndex);
-      }
+  const patchLayout = useCallback((patch: Partial<HomeLayoutSettings>) => {
+    setLayout((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      void saveHomeLayout(patch);
+      return next;
+    });
+  }, []);
+
+  const move = useCallback(
+    (id: HomeModuleId, dir: -1 | 1) => {
+      setLayout((prev) => {
+        if (!prev) return prev;
+        const modules = moveModule(prev, id, dir);
+        void saveHomeLayout({ modules });
+        return { ...prev, modules };
+      });
     },
-    [currentFocusIndex, sections.length, deviceType]
+    [],
   );
 
-  useTVEventHandler(deviceType === "tv" ? handleTVEvent : () => { });
+  const toggleModule = useCallback(
+    (id: HomeModuleId) => {
+      setLayout((prev) => {
+        if (!prev) return prev;
+        const modules = prev.modules.map((m) => (m.id === id ? { ...m, enabled: !m.enabled } : m));
+        void saveHomeLayout({ modules });
+        return { ...prev, modules };
+      });
+    },
+    [],
+  );
 
-  // 动态样式
-  const dynamicStyles = createResponsiveStyles(deviceType, spacing, insets);
+  /* ---------------- 播放偏好 ---------------- */
 
-  const renderSettingsContent = () => (
-    // <KeyboardAvoidingView style={{ flex: 1, backgroundColor }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-    <KeyboardAwareScrollView
-      enableOnAndroid={true}
-      extraScrollHeight={20}
-      keyboardOpeningTime={0}
-      keyboardShouldPersistTaps="always"
-      scrollEnabled={true}
-      style={{ flex: 1, backgroundColor }}
-    >
+  const [autoNext, setAutoNext] = useState(true);
+  const [skipIntroAuto, setSkipIntroAuto] = useState(true);
+  const [adblock, setAdblock] = useState(true);
+  const [proxySegments, setProxySegments] = useState(false);
+  const [danmakuAutoLoad, setDanmakuAutoLoad] = useState(true);
 
-      <ThemedView style={[commonStyles.container, dynamicStyles.container]}>
-        {deviceType === "tv" && (
-          <View style={dynamicStyles.header}>
-            <ThemedText style={dynamicStyles.title}>设置</ThemedText>
-          </View>
-        )}
+  useEffect(() => {
+    void (async () => {
+      const [an, si, ab, ps, dl] = await Promise.all([
+        kv.getString(StorageKeys.PLAYER_AUTO_NEXT),
+        kv.getString(StorageKeys.PLAYER_SKIP_INTRO_AUTO),
+        kv.getString(StorageKeys.ADBLOCK_ENABLED),
+        kv.getString(StorageKeys.PROXY_SEGMENTS),
+        kv.getString(StorageKeys.DANMAKU_DISPLAY_ENABLED),
+      ]);
+      if (an !== null) setAutoNext(an !== 'false');
+      if (si !== null) setSkipIntroAuto(si !== 'false');
+      if (ab !== null) setAdblock(ab !== 'false');
+      if (ps !== null) setProxySegments(ps === 'true');
+      if (dl !== null) setDanmakuAutoLoad(dl !== 'false');
+    })();
+  }, []);
 
-        {/* <View style={dynamicStyles.scrollView}>
-          <FlatList
-            data={sections}
-            renderItem={({ item }) => {
-              if (item) {
-                return item.component;
-              }
-              return null;
-            }}
-            keyExtractor={(item) => (item ? item.key : "default")}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={dynamicStyles.listContent}
-          />
-        </View> */}
-        <View style={dynamicStyles.scrollView}>
-          {sections.map(item => (
-            // 必须把 key 放在最外层的 View 上
-            <View key={item.key} style={dynamicStyles.itemWrapper}>
-              {item.component}
-            </View>
+  const orderedModules = useMemo(
+    () => (layout ? [...layout.modules].sort((a, b) => a.order - b.order) : []),
+    [layout],
+  );
+
+  return (
+    <Screen title="设置" onBack={() => router.back()} scroll testID="screen-settings">
+      {/* ---------------- 服务器 ---------------- */}
+      <Section title="服务器">
+        <Text style={[styles.hint, { fontSize: scaled(fontSize.caption) }]}>
+          当前的站点信息：{server ? `${server.SiteName || '未命名'} · ${server.Version}` : '未连接'}
+          {server ? ` · ${server.StorageType}` : ''}
+        </Text>
+
+        <TextInput
+          value={baseUrl}
+          onChangeText={setBaseUrl}
+          placeholder={DEFAULT_BASE_URL}
+          placeholderTextColor={palette.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[styles.input, { fontSize: scaled(fontSize.small) }]}
+          testID="setting-base-url"
+        />
+
+        <View style={styles.btnRow}>
+          <Focusable onPress={() => void saveBaseUrl()} disabled={probing} style={styles.btn} testID="setting-save-url">
+            {({ focused }) => (
+              <View style={[styles.btnInner, focused ? styles.btnFocused : null]}>
+                {probing ? (
+                  <ActivityIndicator size="small" color={palette.text} />
+                ) : (
+                  <Text style={[styles.btnText, { fontSize: scaled(fontSize.small) }]}>保存并检测</Text>
+                )}
+              </View>
+            )}
+          </Focusable>
+
+          <Focusable onPress={resetBaseUrl} style={styles.btn} testID="setting-reset-url">
+            {({ focused }) => (
+              <View style={[styles.btnInner, focused ? styles.btnFocused : null]}>
+                <Text style={[styles.btnText, { fontSize: scaled(fontSize.small) }]}>恢复默认</Text>
+              </View>
+            )}
+          </Focusable>
+        </View>
+
+        <Text style={[styles.warn, { fontSize: scaled(fontSize.caption) }]}>
+          切换站点会清空当前登录状态（不同站点的凭据不通用），需要重新登录。
+        </Text>
+      </Section>
+
+      {/* ---------------- 首页布局 ---------------- */}
+      <Section title="首页布局">
+        <SwitchRow
+          label="显示轮播图"
+          value={layout?.bannerEnabled ?? true}
+          onChange={(v) => patchLayout({ bannerEnabled: v })}
+          testID="setting-banner"
+        />
+        <SwitchRow
+          label="显示继续观看"
+          value={layout?.continueWatchingEnabled ?? true}
+          onChange={(v) => patchLayout({ continueWatchingEnabled: v })}
+          testID="setting-continue"
+        />
+
+        <Text style={[styles.subLabel, { fontSize: scaled(fontSize.caption) }]}>轮播高度</Text>
+        <View style={styles.btnRow}>
+          {([1, 1.5, 2] as BannerHeightScale[]).map((s) => (
+            <Focusable
+              key={s}
+              onPress={() => patchLayout({ bannerHeightScale: s })}
+              style={styles.chip}
+              testID={`setting-banner-scale-${s}`}
+            >
+              {({ focused }) => (
+                <View
+                  style={[
+                    styles.chipInner,
+                    layout?.bannerHeightScale === s ? styles.chipActive : null,
+                    focused ? styles.chipFocused : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { fontSize: scaled(fontSize.caption) },
+                      layout?.bannerHeightScale === s ? styles.chipTextActive : null,
+                    ]}
+                  >
+                    {s === 1 ? '标准' : `${s}x`}
+                  </Text>
+                </View>
+              )}
+            </Focusable>
           ))}
         </View>
 
-        <View style={dynamicStyles.footer}>
-          <StyledButton
-            text={isLoading ? "保存中..." : "保存设置"}
-            onPress={handleSave}
-            variant="primary"
-            disabled={!hasChanges || isLoading}
-            style={[dynamicStyles.saveButton, (!hasChanges || isLoading) && dynamicStyles.disabledButton]}
-          />
-        </View>
-      </ThemedView>
-    </KeyboardAwareScrollView>
-    // </KeyboardAvoidingView>
-  );
+        <Text style={[styles.subLabel, { fontSize: scaled(fontSize.caption) }]}>
+          模块顺序（开关控制显隐，箭头调整顺序）
+        </Text>
+        {orderedModules.map((m, i) => (
+          <View key={m.id} style={styles.moduleRow}>
+            <Switch
+              value={m.enabled}
+              onValueChange={() => toggleModule(m.id)}
+              trackColor={{ true: palette.primaryDim, false: palette.border }}
+              thumbColor={m.enabled ? palette.primary : palette.textMuted}
+            />
+            <Text
+              style={[
+                styles.moduleName,
+                { fontSize: scaled(fontSize.small) },
+                m.enabled ? null : styles.moduleNameOff,
+              ]}
+              numberOfLines={1}
+            >
+              {m.name}
+            </Text>
 
-  // 根据设备类型决定是否包装在响应式导航中
-  if (deviceType === "tv") {
-    return renderSettingsContent();
-  }
+            <View style={styles.moduleActions}>
+              <Focusable
+                onPress={() => move(m.id, -1)}
+                disabled={i === 0}
+                style={styles.iconBtn}
+                testID={`module-up-${m.id}`}
+              >
+                {({ focused }) => (
+                  <View style={[styles.iconInner, focused ? styles.iconFocused : null]}>
+                    <ChevronUp size={Math.round(scaled(14))} color={palette.text} />
+                  </View>
+                )}
+              </Focusable>
+              <Focusable
+                onPress={() => move(m.id, 1)}
+                disabled={i === orderedModules.length - 1}
+                style={styles.iconBtn}
+                testID={`module-down-${m.id}`}
+              >
+                {({ focused }) => (
+                  <View style={[styles.iconInner, focused ? styles.iconFocused : null]}>
+                    <ChevronDown size={Math.round(scaled(14))} color={palette.text} />
+                  </View>
+                )}
+              </Focusable>
+            </View>
+          </View>
+        ))}
+      </Section>
 
-  return (
-    <ResponsiveNavigation>
-      <ResponsiveHeader title="设置" showBackButton />
-      {renderSettingsContent()}
-    </ResponsiveNavigation>
+      {/* ---------------- 播放偏好 ---------------- */}
+      <Section title="播放偏好">
+        <SwitchRow
+          label="播完自动下一集"
+          value={autoNext}
+          onChange={(v) => {
+            setAutoNext(v);
+            void kv.setString(StorageKeys.PLAYER_AUTO_NEXT, String(v));
+          }}
+          testID="setting-auto-next"
+        />
+        <SwitchRow
+          label="自动跳过片头 / 片尾"
+          hint="具体秒数在播放页的「播放设置」里按片设置"
+          value={skipIntroAuto}
+          onChange={(v) => {
+            setSkipIntroAuto(v);
+            void kv.setString(StorageKeys.PLAYER_SKIP_INTRO_AUTO, String(v));
+          }}
+          testID="setting-skip-auto"
+        />
+        <SwitchRow
+          label="代理去广告"
+          hint="服务端过滤 m3u8 中的广告分片"
+          value={adblock}
+          onChange={(v) => {
+            setAdblock(v);
+            void kv.setString(StorageKeys.ADBLOCK_ENABLED, String(v));
+          }}
+          testID="setting-adblock"
+        />
+        <SwitchRow
+          label="分片也走代理"
+          hint="弱网或源站防盗链严格时开启，带宽会翻倍"
+          value={proxySegments}
+          onChange={(v) => {
+            setProxySegments(v);
+            void kv.setString(StorageKeys.PROXY_SEGMENTS, String(v));
+          }}
+          testID="setting-proxy-segments"
+        />
+      </Section>
+
+      {/* ---------------- 弹幕 ---------------- */}
+      <Section title="弹幕">
+        <SwitchRow
+          label="默认加载弹幕"
+          hint="进入播放页时自动按片名匹配弹幕库"
+          value={danmakuAutoLoad}
+          onChange={(v) => {
+            setDanmakuAutoLoad(v);
+            void kv.setString(StorageKeys.DANMAKU_DISPLAY_ENABLED, String(v));
+          }}
+          testID="setting-danmaku-autoload"
+        />
+        <Text style={[styles.hint, { fontSize: scaled(fontSize.caption) }]}>
+          字号、透明度、速度、显示区域、屏蔽词在播放页的「弹幕」面板里调整，会实时生效并记住。
+        </Text>
+      </Section>
+
+      {/* ---------------- 关于 ---------------- */}
+      <Section title="关于">
+        <InfoRow label="客户端版本" value={`v${APP_VERSION}`} />
+        <InfoRow label="服务端版本" value={server?.Version ?? '未连接'} />
+        <InfoRow label="存储模式" value={server?.StorageType ?? '未知'} />
+        <InfoRow label="登录状态" value={loggedIn ? '已登录' : '未登录'} />
+
+        <Focusable
+          onPress={async () => {
+            await kv.multiRemove([
+              StorageKeys.CACHE_HOME,
+              StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT,
+              StorageKeys.CACHE_FAVORITES_SNAPSHOT,
+              StorageKeys.CACHE_SEARCH_HISTORY_SNAPSHOT,
+              StorageKeys.CACHE_SKIP_CONFIGS,
+              StorageKeys.CACHE_AD_FILTER_CODE,
+              StorageKeys.CACHE_RUNTIME_CONFIG,
+              StorageKeys.HOMEPAGE_MOVIES,
+              StorageKeys.HOMEPAGE_TVSHOWS,
+              StorageKeys.HOMEPAGE_VARIETY,
+              StorageKeys.HOMEPAGE_BANGUMI,
+              StorageKeys.HOMEPAGE_DUANJU,
+              StorageKeys.HOMEPAGE_UPCOMING,
+              StorageKeys.HOMEPAGE_BANNER,
+            ]);
+            showToast('本地缓存已清理', 'success');
+          }}
+          style={styles.btn}
+          testID="setting-clear-cache"
+        >
+          {({ focused }) => (
+            <View style={[styles.btnInner, focused ? styles.btnFocused : null]}>
+              <Text style={[styles.btnText, { fontSize: scaled(fontSize.small) }]}>清理本地缓存</Text>
+            </View>
+          )}
+        </Focusable>
+        <Text style={[styles.hint, { fontSize: scaled(fontSize.caption) }]}>
+          只清本地缓存与首屏数据，不会退出登录，也不会动服务端的收藏与记录。
+        </Text>
+      </Section>
+
+      <View style={{ height: metrics.gutter }} />
+    </Screen>
   );
 }
 
-const createResponsiveStyles = (deviceType: string, spacing: number, insets: any) => {
-  const isMobile = deviceType === "mobile";
-  const isTablet = deviceType === "tablet";
-  const isTV = deviceType === "tv";
-  const minTouchTarget = DeviceUtils.getMinTouchTargetSize();
+/* ------------------------------------------------------------------ */
 
-  return StyleSheet.create({
-    container: {
-      flex: 1,
-      padding: spacing,
-      paddingTop: isTV ? spacing * 2 : isMobile ? insets.top + spacing : insets.top + spacing * 1.5,
-    },
-    header: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: spacing,
-    },
-    title: {
-      fontSize: isMobile ? 24 : isTablet ? 28 : 32,
-      fontWeight: "bold",
-      paddingTop: spacing,
-      color: "white",
-    },
-    scrollView: {
-      flex: 1,
-    },
-    listContent: {
-      paddingBottom: spacing,
-    },
-    footer: {
-      paddingTop: spacing,
-      alignItems: isMobile ? "center" : "flex-end",
-    },
-    saveButton: {
-      minHeight: isMobile ? minTouchTarget : isTablet ? 50 : 50,
-      width: isMobile ? "100%" : isTablet ? 140 : 120,
-      maxWidth: isMobile ? 280 : undefined,
-    },
-    disabledButton: {
-      opacity: 0.5,
-    },
-    itemWrapper: {
-      marginBottom: spacing,   // 这里的 spacing 来自 useResponsiveLayout()
-    },
-  });
-};
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const { scaled } = useShell();
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { fontSize: scaled(fontSize.subtitle) }]}>{title}</Text>
+      <View style={{ gap: spacing.sm }}>{children}</View>
+    </View>
+  );
+}
+
+function SwitchRow({
+  label,
+  hint,
+  value,
+  onChange,
+  testID,
+}: {
+  label: string;
+  hint?: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  testID?: string;
+}) {
+  const { scaled } = useShell();
+  return (
+    <View style={styles.switchRow} testID={testID}>
+      <View style={styles.switchText}>
+        <Text style={[styles.switchLabel, { fontSize: scaled(fontSize.small) }]}>{label}</Text>
+        {hint ? (
+          <Text style={[styles.hint, { fontSize: scaled(fontSize.caption) }]}>{hint}</Text>
+        ) : null}
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        trackColor={{ true: palette.primaryDim, false: palette.border }}
+        thumbColor={value ? palette.primary : palette.textMuted}
+      />
+    </View>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  const { scaled } = useShell();
+  return (
+    <View style={styles.switchRow}>
+      <Text style={[styles.switchLabel, { fontSize: scaled(fontSize.small) }]}>{label}</Text>
+      <Text style={[styles.infoValue, { fontSize: scaled(fontSize.small) }]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+const styles = StyleSheet.create({
+  section: {
+    gap: spacing.sm,
+    marginBottom: spacing.xl,
+  },
+  sectionTitle: {
+    color: palette.text,
+    fontWeight: '700',
+  },
+  subLabel: {
+    color: palette.textMuted,
+    marginTop: spacing.xs,
+  },
+  hint: {
+    color: palette.textMuted,
+    lineHeight: 18,
+  },
+  warn: {
+    color: palette.warning,
+    lineHeight: 18,
+  },
+  input: {
+    color: palette.text,
+    backgroundColor: palette.bgElevated,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    height: 44,
+    paddingVertical: 0,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  btn: {
+    borderRadius: radius.md,
+  },
+  btnInner: {
+    paddingHorizontal: spacing.lg,
+    height: 40,
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    backgroundColor: palette.bgElevated,
+  },
+  btnFocused: {
+    backgroundColor: palette.bgCardHover,
+  },
+  btnText: {
+    color: palette.text,
+  },
+  chip: {
+    borderRadius: radius.pill,
+  },
+  chipInner: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: palette.bgElevated,
+  },
+  chipActive: {
+    backgroundColor: palette.primaryDim,
+  },
+  chipFocused: {
+    backgroundColor: palette.bgCardHover,
+  },
+  chipText: {
+    color: palette.textSecondary,
+  },
+  chipTextActive: {
+    color: palette.text,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  switchText: {
+    flex: 1,
+  },
+  switchLabel: {
+    color: palette.textSecondary,
+  },
+  infoValue: {
+    color: palette.text,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  moduleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  moduleName: {
+    flex: 1,
+    color: palette.text,
+  },
+  moduleNameOff: {
+    color: palette.textMuted,
+  },
+  moduleActions: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  iconBtn: {
+    borderRadius: radius.sm,
+  },
+  iconInner: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: palette.bgElevated,
+  },
+  iconFocused: {
+    backgroundColor: palette.bgCardHover,
+  },
+});

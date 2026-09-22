@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches:
+      # custom：v1.x 发布线（保持不动）
+      # rewrite/v2：v2.x 原生重构发布线（版本号取自本分支的 package.json）
       - custom
+      - rewrite/v2
 
 permissions:
   contents: write

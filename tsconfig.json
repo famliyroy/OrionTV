@@ -5,6 +5,48 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@core/*": [
+        "./src/core/*"
+      ],
+      "@core": [
+        "./src/core"
+      ],
+      "@api/*": [
+        "./src/api/*"
+      ],
+      "@api": [
+        "./src/api"
+      ],
+      "@domain/*": [
+        "./src/domain/*"
+      ],
+      "@domain": [
+        "./src/domain"
+      ],
+      "@runtime/*": [
+        "./src/runtime/*"
+      ],
+      "@runtime": [
+        "./src/runtime"
+      ],
+      "@player/*": [
+        "./src/player/*"
+      ],
+      "@player": [
+        "./src/player"
+      ],
+      "@ui/*": [
+        "./src/ui/*"
+      ],
+      "@ui": [
+        "./src/ui"
+      ],
+      "@danmaku/*": [
+        "./packages/danmaku/src/*"
+      ],
+      "@danmaku": [
+        "./packages/danmaku/src"
       ]
     }
   },

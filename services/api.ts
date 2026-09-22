@@ -73,21 +73,7 @@ export interface ApiSite {
 export interface ServerConfig {
   SiteName: string;
   StorageType: "localstorage" | "redis" | string;
-  /** 登录是否需要 Cloudflare Turnstile 人机验证（MoonTVPlus 服务端开关） */
-  LoginRequireTurnstile?: boolean;
-  /** 注册是否需要 Cloudflare Turnstile 人机验证 */
-  RegistrationRequireTurnstile?: boolean;
-  /** Turnstile 站点 key，用于在客户端渲染验证组件 */
-  TurnstileSiteKey?: string;
 }
-
-/**
- * App 免人机验证密钥：登录/注册请求会附带 X-App-Auth 头，
- * 服务端 MoonTVPlus 配置同值的 APP_AUTH_KEY 环境变量即可豁免 Turnstile（见 server/README.md）。
- * WebView 内置 Turnstile 不可行（Android WebView 强制附加 X-Requested-With 头，
- * Cloudflare 必定判 600010），此密钥是 TV 等无浏览器设备的唯一免验证途径，请修改为自己的随机值。
- */
-export const APP_AUTH_KEY = "oriontv-appkey-cc961360a9758e1aeec17b35";
 
 export class API {
   public baseURL: string = "";
@@ -102,11 +88,7 @@ export class API {
     this.baseURL = url;
   }
 
-  private async _fetch(
-    url: string,
-    options: RequestInit = {},
-    opts: { plainUnauthorized?: boolean } = {}
-  ): Promise<Response> {
+  private async _fetch(url: string, options: RequestInit = {}): Promise<Response> {
     if (!this.baseURL) {
       throw new Error("API_URL_NOT_SET");
     }
@@ -123,23 +105,12 @@ export class API {
 
     const response = await fetch(`${this.baseURL}${url}`, options);
 
-    // 登录/注册接口的 401 表示账号密码错误，需要把服务端文案透出，
-    // 因此这两处用 plainUnauthorized 跳过统一的 UNAUTHORIZED 处理。
-    if (response.status === 401 && !opts.plainUnauthorized) {
+    if (response.status === 401) {
       throw new Error("UNAUTHORIZED");
     }
 
     if (!response.ok) {
-      // 尽量把服务端返回的 { "error": "..." } 透出，让用户看到真实原因
-      // （例如「请完成人机验证」「用户名或密码错误」）
-      let serverMessage = "";
-      try {
-        const data = await response.clone().json();
-        serverMessage = (data && (data.error || data.message)) || "";
-      } catch {
-        // 响应不是 JSON，忽略
-      }
-      throw new Error(serverMessage || `HTTP error! status: ${response.status}`);
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     return response;
@@ -154,22 +125,12 @@ export class API {
     return Array.from(new Set(pairs)).join("; ");
   }
 
-  async login(
-    username?: string | undefined,
-    password?: string,
-    turnstileToken?: string
-  ): Promise<{ ok: boolean }> {
-    const response = await this._fetch(
-      "/api/login",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-App-Auth": APP_AUTH_KEY },
-        // turnstileToken 为 undefined 时会被 JSON.stringify 丢弃，
-        // 因此未开启人机验证的服务端不受影响
-        body: JSON.stringify({ username, password, turnstileToken }),
-      },
-      { plainUnauthorized: true }
-    );
+  async login(username?: string | undefined, password?: string): Promise<{ ok: boolean }> {
+    const response = await this._fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
 
     // 存储cookie到AsyncStorage
     const cookies = response.headers.get("Set-Cookie");
@@ -180,16 +141,12 @@ export class API {
     return response.json();
   }
 
-  async register(username: string, password: string, turnstileToken?: string): Promise<{ ok: boolean }> {
-    const response = await this._fetch(
-      "/api/register",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-App-Auth": APP_AUTH_KEY },
-        body: JSON.stringify({ username, password, turnstileToken }),
-      },
-      { plainUnauthorized: true }
-    );
+  async register(username: string, password: string): Promise<{ ok: boolean }> {
+    const response = await this._fetch("/api/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
 
     // 注册成功后服务器会直接下发登录 Cookie
     const cookies = response.headers.get("Set-Cookie");

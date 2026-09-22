@@ -1,142 +1,56 @@
-import "react-native-gesture-handler";
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
-import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { Platform, View, StyleSheet } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import Toast from "react-native-toast-message";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+/**
+ * 根布局
+ *
+ * 刻意做得非常薄：所有 Provider 与启动引导都在 `AppProviders` 里（见
+ * `src/core/providers.tsx`），这里只负责三件事 ——
+ *   1. 引入 `react-native-gesture-handler`（必须在任何导航组件之前）；
+ *   2. 声明 Stack 与每个路由的转场；
+ *   3. 关掉原生启动页，把画面交给 AppProviders 自己的启动页，避免"先白屏再黑屏"。
+ *
+ * 转场约定：`play` 用 `none`（全屏视频不应该有滑入动画，会有明显黑边），
+ * 其余用 `fade` —— TV 上横向滑动转场在 10 英尺距离看起来很晕。
+ */
 
-import { useSettingsStore } from "@/stores/settingsStore";
-import { useRemoteControlStore } from "@/stores/remoteControlStore";
-import LoginModal from "@/components/LoginModal";
-import useAuthStore from "@/stores/authStore";
-import { useUpdateStore, initUpdateStore } from "@/stores/updateStore";
-import { UpdateModal } from "@/components/UpdateModal";
-import { UPDATE_CONFIG } from "@/constants/UpdateConfig";
-import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import Logger from '@/utils/Logger';
+import 'react-native-gesture-handler';
+import React, { useEffect } from 'react';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import * as SystemUI from 'expo-system-ui';
+import { StatusBar } from 'expo-status-bar';
 
-const logger = Logger.withTag('RootLayout');
+import { AppProviders } from '@core/providers';
+import { palette } from '@core/theme';
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+// 原生启动页先按住，等我们的 BootSplash 可以渲染时再放掉
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
-  const colorScheme = "dark";
-  const [loaded, error] = useFonts({
-    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
-  });
-  const { loadSettings, remoteInputEnabled, apiBaseUrl } = useSettingsStore();
-  const { startServer, stopServer } = useRemoteControlStore();
-  const { checkLoginStatus } = useAuthStore();
-  const { checkForUpdate, lastCheckTime } = useUpdateStore();
-  const responsiveConfig = useResponsiveLayout();
-
   useEffect(() => {
-    const initializeApp = async () => {
-      await loadSettings();
-    };
-    initializeApp();
-    initUpdateStore(); // 初始化更新存储
-  }, [loadSettings]);
-
-  useEffect(() => {
-    if (apiBaseUrl) {
-      checkLoginStatus(apiBaseUrl);
-    }
-  }, [apiBaseUrl, checkLoginStatus]);
-
-  useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-      if (error) {
-        logger.warn(`Error in loading fonts: ${error}`);
-      }
-    }
-  }, [loaded, error]);
-
-  // 检查更新
-  useEffect(() => {
-    if (loaded && UPDATE_CONFIG.AUTO_CHECK && Platform.OS === 'android') {
-      // 检查是否需要自动检查更新
-      const shouldCheck = Date.now() - lastCheckTime > UPDATE_CONFIG.CHECK_INTERVAL;
-      if (shouldCheck) {
-        checkForUpdate(true); // 静默检查
-      }
-    }
-  }, [loaded, lastCheckTime, checkForUpdate]);
-
-  useEffect(() => {
-    // 只有在非手机端才启动远程控制服务器
-    if (remoteInputEnabled && responsiveConfig.deviceType !== "mobile") {
-      startServer();
-    } else {
-      stopServer();
-    }
-  }, [remoteInputEnabled, startServer, stopServer, responsiveConfig.deviceType]);
-
-  if (!loaded && !error) {
-    return null;
-  }
+    // 让原生 UI 底色与 JS 主题一致，避免切换路由时闪白
+    void SystemUI.setBackgroundColorAsync(palette.bg).catch(() => {});
+    void SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-          <View style={styles.container}>
-            <Stack
-              screenOptions={{
-                // 强化页面切换动效：默认底部滑入的卡片式转场
-                animation: "slide_from_right",
-                animationDuration: 280,
-                gestureEnabled: true,
-                gestureDirection: "horizontal",
-              }}
-            >
-              <Stack.Screen name="index" options={{ headerShown: false, animation: "fade" }} />
-              <Stack.Screen
-                name="detail"
-                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 300 }}
-              />
-              {Platform.OS !== "web" && (
-                <Stack.Screen
-                  name="play"
-                  options={{ headerShown: false, animation: "fade_from_bottom", animationDuration: 250 }}
-                />
-              )}
-              <Stack.Screen
-                name="search"
-                options={{ headerShown: false, animation: "slide_from_bottom", animationDuration: 300 }}
-              />
-              <Stack.Screen
-                name="live"
-                options={{ headerShown: false, animation: "fade_from_bottom", animationDuration: 250 }}
-              />
-              <Stack.Screen
-                name="settings"
-                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 280 }}
-              />
-              <Stack.Screen
-                name="favorites"
-                options={{ headerShown: false, animation: "slide_from_right", animationDuration: 280 }}
-              />
-              <Stack.Screen name="+not-found" />
-            </Stack>
-          </View>
-          <Toast />
-          <LoginModal />
-          <UpdateModal />
-        </ThemeProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <AppProviders>
+      <StatusBar style="light" hidden />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: 'fade',
+          contentStyle: { backgroundColor: palette.bg },
+        }}
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="search" />
+        <Stack.Screen name="detail" />
+        {/* 全屏播放：不要转场动画 */}
+        <Stack.Screen name="play" options={{ animation: 'none' }} />
+        <Stack.Screen name="me" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="settings" />
+        <Stack.Screen name="+not-found" />
+      </Stack>
+    </AppProviders>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});

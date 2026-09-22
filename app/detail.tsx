@@ -1,449 +1,477 @@
-import React, { useEffect } from "react";
-import { View, Text, StyleSheet, Image, ScrollView, ActivityIndicator } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { ThemedView } from "@/components/ThemedView";
-import { ThemedText } from "@/components/ThemedText";
-import { StyledButton } from "@/components/StyledButton";
-import VideoLoadingAnimation from "@/components/VideoLoadingAnimation";
-import useDetailStore from "@/stores/detailStore";
-import { FontAwesome } from "@expo/vector-icons";
-import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
-import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
-import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
+/**
+ * 详情页（选源 / 选集）
+ *
+ * 数据只有一条来源：`GET /api/source-detail`，实测与搜索结果**同构**
+ * （字段完全一致），`episodes` 直接就是可播放地址数组，不再需要二次解析。
+ *
+ * 三个容易踩的点：
+ *   1. 详情接口需要登录。401 时不要显示"加载失败"，而是引导登录。
+ *   2. 部分源（小雅 / OpenList）必须带 `fileName` 才能拿到播放地址，字段从
+ *      路由参数透传，不要丢。
+ *   3. 一些源会返回 300+ 集，选集区必须是独立可滚动区域，不能整页滚动
+ *      —— 否则用户永远划不到底部的"简介"。
+ */
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Heart, Play } from 'lucide-react-native';
+
+import { getSourceDetail, toEpisodes } from '@api/repos/detail';
+import { deleteFavorite, isFavorited, saveFavorite } from '@api/repos/home';
+import { ApiError } from '@api/client';
+import type { Favorite } from '@api/types';
+
+import { qk, invalidateGroup } from '@core/query';
+import { useAuth } from '@core/useAuth';
+import { playHref } from '@core/navigation';
+import { palette, fontSize, radius, spacing } from '@core/theme';
+
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  Focusable,
+  RemoteImage,
+  Screen,
+  showToast,
+  useShell,
+} from '@ui';
 
 export default function DetailScreen() {
-  const { q, source, id } = useLocalSearchParams<{ q: string; source?: string; id?: string }>();
   const router = useRouter();
+  const { metrics, scaled, shell } = useShell();
+  const isTV = shell === 'tv';
+  const queryClient = useQueryClient();
 
-  // 响应式布局配置
-  const responsiveConfig = useResponsiveLayout();
-  const commonStyles = getCommonResponsiveStyles(responsiveConfig);
-  const { deviceType, spacing } = responsiveConfig;
+  const params = useLocalSearchParams<{
+    id?: string;
+    source?: string;
+    title?: string;
+    episode?: string;
+    fileName?: string;
+    special?: string;
+  }>();
 
-  const {
-    detail,
-    searchResults,
-    loading,
-    error,
-    allSourcesLoaded,
-    init,
-    setDetail,
-    abort,
-    isFavorited,
-    toggleFavorite,
-  } = useDetailStore();
+  const id = params.id ? String(params.id) : '';
+  const source = params.source ? String(params.source) : '';
+  const fallbackTitle = params.title ? String(params.title) : '';
+  const fileName = params.fileName ? String(params.fileName) : undefined;
+  const special = params.special === '1';
+  const startIndex = params.episode ? Number(params.episode) || 0 : 0;
 
-  useEffect(() => {
-    if (q) {
-      init(q, source, id);
-    }
-    return () => {
-      abort();
-    };
-  }, [abort, init, q, source, id]);
+  const { loggedIn } = useAuth();
 
-  const handlePlay = (episodeIndex: number) => {
-    if (!detail) return;
-    abort(); // Cancel any ongoing fetches
-    router.push({
-      pathname: "/play",
-      params: {
-        // Pass necessary identifiers, the rest will be in the store
-        q: detail.title,
-        source: detail.source,
-        id: detail.id.toString(),
-        episodeIndex: episodeIndex.toString(),
-      },
-    });
-  };
+  const detailQuery = useQuery({
+    queryKey: qk.detail(source, id),
+    queryFn: () =>
+      getSourceDetail({
+        id,
+        source,
+        title: fallbackTitle || undefined,
+        fileName,
+        special,
+      }),
+    enabled: !!id && !!source,
+    staleTime: 10 * 60 * 1000,
+    retry: 0,
+  });
 
-  if (loading) {
-    return <VideoLoadingAnimation showProgressBar={false} />;
-  }
+  const detail = detailQuery.data ?? null;
+  const episodes = useMemo(() => toEpisodes(detail), [detail]);
+  const title = detail?.title || fallbackTitle || '详情';
 
-  if (error) {
-    const content = (
-      <ThemedView style={[commonStyles.safeContainer, commonStyles.center]}>
-        <ThemedText type="subtitle" style={commonStyles.textMedium}>
-          {error}
-        </ThemedText>
-      </ThemedView>
-    );
+  /* ---------------- 收藏 ---------------- */
 
-    if (deviceType === 'tv') {
-      return content;
-    }
+  const favKey = `${source}+${id}`;
+  const favQuery = useQuery({
+    queryKey: ['favorite', favKey],
+    queryFn: () => isFavorited(source, id),
+    enabled: loggedIn && !!id && !!source,
+    staleTime: 60 * 1000,
+  });
 
-    return (
-      <ResponsiveNavigation>
-        <ResponsiveHeader title="详情" showBackButton />
-        {content}
-      </ResponsiveNavigation>
-    );
-  }
+  /** 乐观值：点击后立刻变色，请求失败再回滚 */
+  const [optimisticFav, setOptimisticFav] = useState<boolean | null>(null);
+  const favorited = optimisticFav ?? favQuery.data ?? false;
 
-  if (!detail) {
-    const content = (
-      <ThemedView style={[commonStyles.safeContainer, commonStyles.center]}>
-        <ThemedText type="subtitle">未找到详情信息</ThemedText>
-      </ThemedView>
-    );
+  const favMutation = useMutation({
+    mutationFn: async (next: boolean) => {
+      if (next) {
+        const favorite: Favorite = {
+          title,
+          source_name: detail?.source_name ?? '',
+          cover: detail?.poster ?? '',
+          year: detail?.year ?? '',
+          total_episodes: episodes.length,
+          save_time: Date.now(),
+          search_title: fallbackTitle || detail?.title || title,
+          origin: 'vod',
+        };
+        await saveFavorite(favKey, favorite);
+      } else {
+        await deleteFavorite(favKey);
+      }
+    },
+    onMutate: (next: boolean) => {
+      setOptimisticFav(next);
+    },
+    onError: (err: unknown) => {
+      setOptimisticFav(null);
+      showToast(err instanceof Error ? err.message : '操作失败', 'error');
+    },
+    onSuccess: () => {
+      setOptimisticFav(null);
+      invalidateGroup('favorites');
+      void queryClient.invalidateQueries({ queryKey: ['favorite', favKey] });
+    },
+  });
 
-    if (deviceType === 'tv') {
-      return content;
-    }
+  /* ---------------- 播放 ---------------- */
 
-    return (
-      <ResponsiveNavigation>
-        <ResponsiveHeader title="详情" showBackButton />
-        {content}
-      </ResponsiveNavigation>
-    );
-  }
-
-  // 动态样式
-  const dynamicStyles = createResponsiveStyles(deviceType, spacing);
-
-  const renderDetailContent = () => {
-    if (deviceType === 'mobile') {
-      // 移动端垂直布局
-      return (
-        <ScrollView style={dynamicStyles.scrollContainer}>
-          {/* 海报和基本信息 */}
-          <View style={dynamicStyles.mobileTopContainer}>
-            <Image source={{ uri: detail.poster }} style={dynamicStyles.mobilePoster} />
-            <View style={dynamicStyles.mobileInfoContainer}>
-              <View style={dynamicStyles.titleContainer}>
-                <ThemedText style={dynamicStyles.title} numberOfLines={2}>
-                  {detail.title}
-                </ThemedText>
-                <StyledButton onPress={toggleFavorite} variant="ghost" style={dynamicStyles.favoriteButton}>
-                  <FontAwesome
-                    name={isFavorited ? "heart" : "heart-o"}
-                    size={20}
-                    color={isFavorited ? "#feff5f" : "#ccc"}
-                  />
-                </StyledButton>
-              </View>
-              <View style={dynamicStyles.metaContainer}>
-                <ThemedText style={dynamicStyles.metaText}>{detail.year}</ThemedText>
-                <ThemedText style={dynamicStyles.metaText}>{detail.type_name}</ThemedText>
-              </View>
-            </View>
-          </View>
-
-          {/* 描述 */}
-          <View style={dynamicStyles.descriptionContainer}>
-            <ThemedText style={dynamicStyles.description}>{detail.desc}</ThemedText>
-          </View>
-
-          {/* 播放源 */}
-          <View style={dynamicStyles.sourcesContainer}>
-            <View style={dynamicStyles.sourcesTitleContainer}>
-              <ThemedText style={dynamicStyles.sourcesTitle}>播放源 ({searchResults.length})</ThemedText>
-              {!allSourcesLoaded && <ActivityIndicator style={{ marginLeft: 10 }} />}
-            </View>
-            <View style={dynamicStyles.sourceList}>
-              {searchResults.map((item, index) => {
-                const isSelected = detail?.source === item.source;
-                return (
-                  <StyledButton
-                    key={index}
-                    onPress={() => setDetail(item)}
-                    isSelected={isSelected}
-                    style={dynamicStyles.sourceButton}
-                  >
-                    <ThemedText style={dynamicStyles.sourceButtonText}>{item.source_name}</ThemedText>
-                    {item.episodes.length > 1 && (
-                      <View style={[dynamicStyles.badge, isSelected && dynamicStyles.selectedBadge]}>
-                        <Text style={dynamicStyles.badgeText}>
-                          {item.episodes.length > 99 ? "99+" : `${item.episodes.length}`} 集
-                        </Text>
-                      </View>
-                    )}
-                    {item.resolution && (
-                      <View style={[dynamicStyles.badge, { backgroundColor: "#666" }, isSelected && dynamicStyles.selectedBadge]}>
-                        <Text style={dynamicStyles.badgeText}>{item.resolution}</Text>
-                      </View>
-                    )}
-                  </StyledButton>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* 剧集列表 */}
-          <View style={dynamicStyles.episodesContainer}>
-            <ThemedText style={dynamicStyles.episodesTitle}>播放列表</ThemedText>
-            <View style={dynamicStyles.episodeList}>
-              {detail.episodes.map((episode, index) => (
-                <StyledButton
-                  key={index}
-                  style={dynamicStyles.episodeButton}
-                  onPress={() => handlePlay(index)}
-                  text={`第 ${index + 1} 集`}
-                  textStyle={dynamicStyles.episodeButtonText}
-                />
-              ))}
-            </View>
-          </View>
-        </ScrollView>
+  const play = useCallback(
+    (index: number) => {
+      if (episodes.length === 0) return;
+      const ep = episodes[Math.max(0, Math.min(episodes.length - 1, index))];
+      router.push(
+        playHref({
+          id,
+          source,
+          title,
+          index: ep.index,
+          sourceName: detail?.source_name,
+          poster: detail?.poster,
+          year: detail?.year,
+          totalEpisodes: episodes.length,
+        }),
       );
-    } else {
-      // 平板和TV端水平布局
-      return (
-        <ScrollView style={dynamicStyles.scrollContainer}>
-          <View style={dynamicStyles.topContainer}>
-            <Image source={{ uri: detail.poster }} style={dynamicStyles.poster} />
-            <View style={dynamicStyles.infoContainer}>
-              <View style={dynamicStyles.titleContainer}>
-                <ThemedText style={dynamicStyles.title} numberOfLines={1} ellipsizeMode="tail">
-                  {detail.title}
-                </ThemedText>
-                <StyledButton onPress={toggleFavorite} variant="ghost" style={dynamicStyles.favoriteButton}>
-                  <FontAwesome
-                    name={isFavorited ? "heart" : "heart-o"}
-                    size={24}
-                    color={isFavorited ? "#feff5f" : "#ccc"}
-                  />
-                </StyledButton>
-              </View>
-              <View style={dynamicStyles.metaContainer}>
-                <ThemedText style={dynamicStyles.metaText}>{detail.year}</ThemedText>
-                <ThemedText style={dynamicStyles.metaText}>{detail.type_name}</ThemedText>
-              </View>
-
-              <ScrollView style={dynamicStyles.descriptionScrollView}>
-                <ThemedText style={dynamicStyles.description}>{detail.desc}</ThemedText>
-              </ScrollView>
-            </View>
-          </View>
-
-          <View style={dynamicStyles.bottomContainer}>
-            <View style={dynamicStyles.sourcesContainer}>
-              <View style={dynamicStyles.sourcesTitleContainer}>
-                <ThemedText style={dynamicStyles.sourcesTitle}>选择播放源 共 {searchResults.length} 个</ThemedText>
-                {!allSourcesLoaded && <ActivityIndicator style={{ marginLeft: 10 }} />}
-              </View>
-              <View style={dynamicStyles.sourceList}>
-                {searchResults.map((item, index) => {
-                  const isSelected = detail?.source === item.source;
-                  return (
-                    <StyledButton
-                      key={index}
-                      onPress={() => setDetail(item)}
-                      hasTVPreferredFocus={index === 0}
-                      isSelected={isSelected}
-                      style={dynamicStyles.sourceButton}
-                    >
-                      <ThemedText style={dynamicStyles.sourceButtonText}>{item.source_name}</ThemedText>
-                      {item.episodes.length > 1 && (
-                        <View style={[dynamicStyles.badge, isSelected && dynamicStyles.selectedBadge]}>
-                          <Text style={dynamicStyles.badgeText}>
-                            {item.episodes.length > 99 ? "99+" : `${item.episodes.length}`} 集
-                          </Text>
-                        </View>
-                      )}
-                      {item.resolution && (
-                        <View style={[dynamicStyles.badge, { backgroundColor: "#666" }, isSelected && dynamicStyles.selectedBadge]}>
-                          <Text style={dynamicStyles.badgeText}>{item.resolution}</Text>
-                        </View>
-                      )}
-                    </StyledButton>
-                  );
-                })}
-              </View>
-            </View>
-            <View style={dynamicStyles.episodesContainer}>
-              <ThemedText style={dynamicStyles.episodesTitle}>播放列表</ThemedText>
-              <ScrollView contentContainerStyle={dynamicStyles.episodeList}>
-                {detail.episodes.map((episode, index) => (
-                  <StyledButton
-                    key={index}
-                    style={dynamicStyles.episodeButton}
-                    onPress={() => handlePlay(index)}
-                    text={`第 ${index + 1} 集`}
-                    textStyle={dynamicStyles.episodeButtonText}
-                  />
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </ScrollView>
-      );
-    }
-  };
-
-  const content = (
-    <ThemedView style={[commonStyles.container, { paddingTop: deviceType === 'tv' ? 40 : 0 }]}>
-      {renderDetailContent()}
-    </ThemedView>
+    },
+    [detail?.poster, detail?.source_name, detail?.year, episodes, id, router, source, title],
   );
 
-  // 根据设备类型决定是否包装在响应式导航中
-  if (deviceType === 'tv') {
-    return content;
+  /* ---------------- 渲染 ---------------- */
+
+  if (!id || !source) {
+    return (
+      <Screen title="详情" onBack={() => router.back()} testID="screen-detail">
+        <EmptyState title="参数不完整" description="缺少 id 或 source，无法加载详情" />
+      </Screen>
+    );
   }
 
+  const unauthorized = detailQuery.error instanceof ApiError && detailQuery.error.isUnauthorized;
+
+  if (detailQuery.isLoading || unauthorized || (detailQuery.isError && !detail)) {
+    return (
+      <Screen
+        title={title}
+        onBack={() => router.back()}
+        testID="screen-detail"
+        loading={detailQuery.isLoading}
+      >
+        {unauthorized ? (
+          <EmptyState
+            title="需要登录"
+            description="详情接口需要登录后才能访问"
+            actionLabel="去登录"
+            onAction={() => router.push('/login')}
+          />
+        ) : (
+          <ErrorState
+            message={detailQuery.error instanceof Error ? detailQuery.error.message : '详情加载失败'}
+            onRetry={() => void detailQuery.refetch()}
+            retrying={detailQuery.isFetching}
+          />
+        )}
+      </Screen>
+    );
+  }
+
+  const posterWidth = Math.round((isTV ? 160 : 110) * metrics.scale);
+  const posterHeight = Math.round(posterWidth / (2 / 3));
+
   return (
-    <ResponsiveNavigation>
-      <ResponsiveHeader title={detail?.title || "详情"} showBackButton />
-      {content}
-    </ResponsiveNavigation>
+    <Screen
+      title={title}
+      onBack={() => router.back()}
+      contentStyle={{ paddingHorizontal: 0 }}
+      testID="screen-detail"
+    >
+      {/* 头部信息：海报 + 元信息 + 操作 */}
+      <View style={[styles.head, { paddingHorizontal: metrics.gutter, gap: spacing.lg }]}>
+        <RemoteImage
+          uri={detail?.poster}
+          width={posterWidth}
+          height={posterHeight}
+          radius={radius.md}
+        />
+
+        <View style={styles.headInfo}>
+          <Text
+            style={[styles.title, { fontSize: scaled(isTV ? fontSize.tvTitle : fontSize.title) }]}
+            numberOfLines={2}
+          >
+            {title}
+          </Text>
+
+          <View style={styles.badgeRow}>
+            {detail?.year ? <Badge text={detail.year} /> : null}
+            {detail?.type_name ? <Badge text={detail.type_name} /> : null}
+            {detail?.source_name ? <Badge text={detail.source_name} tone="primary" /> : null}
+            {episodes.length > 0 ? <Badge text={`共${episodes.length}集`} /> : null}
+          </View>
+
+          {detail?.desc ? (
+            <Text
+              style={[styles.desc, { fontSize: scaled(fontSize.small) }]}
+              numberOfLines={isTV ? 4 : 3}
+            >
+              {detail.desc}
+            </Text>
+          ) : null}
+
+          <View style={[styles.actions, { gap: spacing.sm }]}>
+            <Focusable
+              onPress={() => play(startIndex)}
+              disabled={episodes.length === 0}
+              style={styles.primaryBtn}
+              testID="detail-play"
+            >
+              {({ focused }) => (
+                <View style={[styles.primaryInner, focused ? styles.primaryFocused : null]}>
+                  <Play size={Math.round(scaled(16))} color={palette.primaryText} />
+                  <Text style={[styles.primaryText, { fontSize: scaled(fontSize.small) }]}>
+                    {startIndex > 0 ? `继续第 ${startIndex + 1} 集` : '播放'}
+                  </Text>
+                </View>
+              )}
+            </Focusable>
+
+            <Focusable
+              onPress={() => {
+                if (!loggedIn) {
+                  router.push('/login');
+                  return;
+                }
+                favMutation.mutate(!favorited);
+              }}
+              style={styles.ghostBtn}
+              testID="detail-favorite"
+            >
+              {({ focused }) => (
+                <View style={[styles.ghostInner, focused ? styles.ghostFocused : null]}>
+                  <Heart
+                    size={Math.round(scaled(16))}
+                    color={favorited ? palette.danger : palette.textSecondary}
+                    fill={favorited ? palette.danger : 'transparent'}
+                  />
+                  <Text style={[styles.ghostText, { fontSize: scaled(fontSize.small) }]}>
+                    {favorited ? '已收藏' : '收藏'}
+                  </Text>
+                </View>
+              )}
+            </Focusable>
+          </View>
+        </View>
+      </View>
+
+      {/* 选集：独立滚动区域 */}
+      <View style={styles.episodeSection}>
+        <View style={[styles.episodeHeader, { paddingHorizontal: metrics.gutter }]}>
+          <Text style={[styles.sectionTitle, { fontSize: scaled(fontSize.subtitle) }]}>选集</Text>
+          {episodes.length > 0 ? (
+            <Text style={[styles.sectionMeta, { fontSize: scaled(fontSize.caption) }]}>
+              {episodes.length} 集
+            </Text>
+          ) : null}
+        </View>
+
+        {episodes.length === 0 ? (
+          <View style={{ paddingHorizontal: metrics.gutter }}>
+            <EmptyState
+              title="没有可用剧集"
+              description={detailQuery.isFetching ? '加载中…' : '该源未返回播放地址'}
+            />
+          </View>
+        ) : (
+          <FlatList
+            data={episodes}
+            keyExtractor={(ep) => `${ep.index}-${ep.url.slice(-24)}`}
+            numColumns={isTV ? 6 : 4}
+            renderItem={({ item }) => (
+              <EpisodeButton
+                label={item.title}
+                index={item.index}
+                current={item.index === startIndex}
+                onPress={() => play(item.index)}
+              />
+            )}
+            columnWrapperStyle={{ gap: spacing.sm }}
+            contentContainerStyle={{
+              paddingHorizontal: metrics.gutter,
+              paddingBottom: spacing.xxl,
+              gap: spacing.sm,
+            }}
+            showsVerticalScrollIndicator={false}
+            removeClippedSubviews={!isTV}
+            initialNumToRender={24}
+          />
+        )}
+      </View>
+
+      {detailQuery.isFetching && !detailQuery.isLoading ? (
+        <View style={styles.fetching}>
+          <ActivityIndicator size="small" color={palette.primary} />
+        </View>
+      ) : null}
+    </Screen>
   );
 }
 
-const createResponsiveStyles = (deviceType: string, spacing: number) => {
-  const isTV = deviceType === 'tv';
-  const isTablet = deviceType === 'tablet';
-  const isMobile = deviceType === 'mobile';
+function EpisodeButton({
+  label,
+  index,
+  current,
+  onPress,
+}: {
+  label: string;
+  index: number;
+  current: boolean;
+  onPress: () => void;
+}) {
+  const { scaled } = useShell();
+  return (
+    <Focusable onPress={onPress} style={styles.episodeBtn} testID={`episode-${index}`}>
+      {({ focused }) => (
+        <View
+          style={[
+            styles.episodeInner,
+            current ? styles.episodeCurrent : null,
+            focused ? styles.episodeFocused : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.episodeText,
+              { fontSize: scaled(fontSize.small) },
+              current ? styles.episodeTextCurrent : null,
+            ]}
+            numberOfLines={1}
+          >
+            {label}
+          </Text>
+        </View>
+      )}
+    </Focusable>
+  );
+}
 
-  return StyleSheet.create({
-    scrollContainer: {
-      flex: 1,
-    },
-    
-    // 移动端专用样式
-    mobileTopContainer: {
-      paddingHorizontal: spacing,
-      paddingTop: spacing,
-      paddingBottom: spacing / 2,
-    },
-    mobilePoster: {
-      width: '100%',
-      height: 280,
-      borderRadius: 8,
-      alignSelf: 'center',
-      marginBottom: spacing,
-    },
-    mobileInfoContainer: {
-      flex: 1,
-    },
-    descriptionContainer: {
-      paddingHorizontal: spacing,
-      paddingBottom: spacing,
-    },
-
-    // 平板和TV端样式
-    topContainer: {
-      flexDirection: "row",
-      padding: spacing,
-    },
-    poster: {
-      width: isTV ? 200 : 160,
-      height: isTV ? 300 : 240,
-      borderRadius: 8,
-    },
-    infoContainer: {
-      flex: 1,
-      marginLeft: spacing,
-      justifyContent: "flex-start",
-    },
-    descriptionScrollView: {
-      height: 150,
-    },
-
-    // 通用样式
-    titleContainer: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginBottom: spacing / 2,
-    },
-    title: {
-      paddingTop: 16,
-      fontSize: isMobile ? 20 : isTablet ? 24 : 28,
-      fontWeight: "bold",
-      flexShrink: 1,
-      color: 'white',
-    },
-    favoriteButton: {
-      padding: 10,
-      marginLeft: 10,
-      backgroundColor: "transparent",
-    },
-    metaContainer: {
-      flexDirection: "row",
-      marginBottom: spacing / 2,
-    },
-    metaText: {
-      color: "#aaa",
-      marginRight: spacing / 2,
-      fontSize: isMobile ? 12 : 14,
-    },
-    description: {
-      fontSize: isMobile ? 13 : 14,
-      color: "#ccc",
-      lineHeight: isMobile ? 18 : 22,
-    },
-
-    // 播放源和剧集样式
-    bottomContainer: {
-      paddingHorizontal: spacing,
-    },
-    sourcesContainer: {
-      marginTop: spacing,
-    },
-    sourcesTitleContainer: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginBottom: spacing / 2,
-    },
-    sourcesTitle: {
-      fontSize: isMobile ? 16 : isTablet ? 18 : 20,
-      fontWeight: "bold",
-      color: 'white',
-    },
-    sourceList: {
-      flexDirection: "row",
-      flexWrap: "wrap",
-    },
-    sourceButton: {
-      margin: isMobile ? 4 : 8,
-      minHeight: isMobile ? 36 : 44,
-    },
-    sourceButtonText: {
-      color: "white",
-      fontSize: isMobile ? 14 : 16,
-    },
-    badge: {
-      backgroundColor: "#666",
-      borderRadius: 10,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      marginLeft: 8,
-    },
-    badgeText: {
-      color: "#fff",
-      fontSize: isMobile ? 10 : 12,
-      fontWeight: "bold",
-      paddingBottom: 2.5,
-    },
-    selectedBadge: {
-      backgroundColor: "#4c4c4c",
-    },
-
-    episodesContainer: {
-      marginTop: spacing,
-      paddingBottom: spacing * 2,
-    },
-    episodesTitle: {
-      fontSize: isMobile ? 16 : isTablet ? 18 : 20,
-      fontWeight: "bold",
-      marginBottom: spacing / 2,
-      color: 'white',
-    },
-    episodeList: {
-      flexDirection: "row",
-      flexWrap: "wrap",
-    },
-    episodeButton: {
-      margin: isMobile ? 3 : 5,
-      minHeight: isMobile ? 32 : 36,
-    },
-    episodeButtonText: {
-      color: "white",
-      fontSize: isMobile ? 12 : 14,
-    },
-  });
-};
+const styles = StyleSheet.create({
+  head: {
+    flexDirection: 'row',
+  },
+  headInfo: {
+    flex: 1,
+    gap: spacing.sm,
+  },
+  title: {
+    color: palette.text,
+    fontWeight: '700',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  desc: {
+    color: palette.textSecondary,
+    lineHeight: 20,
+  },
+  actions: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+  },
+  primaryBtn: {
+    borderRadius: radius.md,
+  },
+  primaryInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: palette.primary,
+  },
+  primaryFocused: {
+    backgroundColor: palette.borderStrong,
+  },
+  primaryText: {
+    color: palette.primaryText,
+    fontWeight: '600',
+  },
+  ghostBtn: {
+    borderRadius: radius.md,
+  },
+  ghostInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: palette.bgElevated,
+  },
+  ghostFocused: {
+    backgroundColor: palette.bgCardHover,
+  },
+  ghostText: {
+    color: palette.textSecondary,
+  },
+  episodeSection: {
+    flex: 1,
+    marginTop: spacing.xl,
+  },
+  episodeHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    color: palette.text,
+    fontWeight: '600',
+  },
+  sectionMeta: {
+    color: palette.textMuted,
+  },
+  episodeBtn: {
+    flex: 1,
+    borderRadius: radius.sm,
+  },
+  episodeInner: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: palette.bgElevated,
+    alignItems: 'center',
+  },
+  episodeCurrent: {
+    backgroundColor: palette.primaryDim,
+  },
+  episodeFocused: {
+    backgroundColor: palette.bgCardHover,
+  },
+  episodeText: {
+    color: palette.textSecondary,
+  },
+  episodeTextCurrent: {
+    color: palette.text,
+  },
+  fetching: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.lg,
+  },
+});
