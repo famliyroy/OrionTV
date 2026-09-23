@@ -140,7 +140,7 @@ export default function MeScreen() {
     >
       <View style={[styles.tabs, { paddingHorizontal: metrics.gutter }]}>
         <TabButton label="收藏" active={tab === 'favorites'} onPress={() => setTab('favorites')} />
-        <TabButton label="记录" active={tab === 'records'} onPress={() => setTab('records')} />
+        <TabButton label="观看记录" active={tab === 'records'} onPress={() => setTab('records')} />
         <TabButton label="账号" active={tab === 'account'} onPress={() => setTab('account')} />
       </View>
 
@@ -515,24 +515,32 @@ function TabButton({
   onPress: () => void;
 }) {
   const { scaled } = useShell();
+  /**
+   * 外层这个 `<View style={tabSlot}>` 不能省：`Focusable` 把调用方传的 `style`
+   * （这里是 `flex: 1`）施加在**内层** View 上，外层 `Pressable` 依旧按内容自适应，
+   * 于是三个页签全挤在左边，激活页签的蓝色底（`primaryDim`）只有文字那么宽，
+   * 还会被相邻页签压住一角（真机看到的"色块不统一"就是它）。等分由槽位负责。
+   */
   return (
-    <Focusable onPress={onPress} style={styles.tab} testID={`me-tab-${label}`}>
-      {({ focused }) => (
-        <View
-          style={[styles.tabInner, active ? styles.tabActive : null, focused ? styles.tabFocused : null]}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              { fontSize: scaled(fontSize.small) },
-              active ? styles.tabTextActive : null,
-            ]}
+    <View style={styles.tabSlot}>
+      <Focusable onPress={onPress} style={styles.tab} testID={`me-tab-${label}`}>
+        {({ focused }) => (
+          <View
+            style={[styles.tabInner, active ? styles.tabActive : null, focused ? styles.tabFocused : null]}
           >
-            {label}
-          </Text>
-        </View>
-      )}
-    </Focusable>
+            <Text
+              style={[
+                styles.tabText,
+                { fontSize: scaled(fontSize.small) },
+                active ? styles.tabTextActive : null,
+              ]}
+            >
+              {label}
+            </Text>
+          </View>
+        )}
+      </Focusable>
+    </View>
   );
 }
 
@@ -542,8 +550,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.sm,
   },
-  tab: {
+  tabSlot: {
     flex: 1,
+  },
+  /** 不写 flex:1：Focusable 的内层 View 若用 flex，会被自适应高度的 Pressable 塌掉（同底栏的坑） */
+  tab: {
     borderRadius: radius.md,
   },
   tabInner: {

@@ -1,8 +1,8 @@
 import { NAV_ITEMS, activeNavKey, isImmersiveRoute } from '../shell/navItems';
 
 describe('壳导航路由表', () => {
-  it('四个页签顺序固定：首页 → 搜索 → 我的 → 设置', () => {
-    expect(NAV_ITEMS.map((i) => i.key)).toEqual(['home', 'search', 'me', 'settings']);
+  it('三个页签顺序固定：首页 → 我的 → 设置（v2.0.2 起去掉搜索，搜索入口只在首页）', () => {
+    expect(NAV_ITEMS.map((i) => i.key)).toEqual(['home', 'me', 'settings']);
     expect(NAV_ITEMS.every((i) => i.href.startsWith('/'))).toBe(true);
   });
 
@@ -12,13 +12,13 @@ describe('壳导航路由表', () => {
   });
 
   it('页签路由命中各自 key', () => {
-    expect(activeNavKey('/search')).toBe('search');
     expect(activeNavKey('/me')).toBe('me');
     expect(activeNavKey('/settings')).toBe('settings');
   });
 
-  it('deep link 带查询串时仍能命中', () => {
-    expect(activeNavKey('/search?q=qingyu')).toBe('search');
+  it('搜索页不在壳导航里，也不再高亮任何页签', () => {
+    expect(activeNavKey('/search')).toBeNull();
+    expect(activeNavKey('/search?q=qingyu')).toBeNull();
   });
 
   it('不在导航表里的路由不高亮任何项', () => {

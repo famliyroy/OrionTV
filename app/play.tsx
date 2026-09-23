@@ -607,13 +607,24 @@ export default function PlayScreen() {
 
   /* ---------------- 横屏锁定（手机/平板） ---------------- */
 
+  /**
+   * 锁横屏只能做**一次**，不能跟着屏幕尺寸的 effect 跑。
+   *
+   * 之前这里依赖 `metrics.width/height`：进入播放页 → 锁横屏 → 尺寸变化触发
+   * effect 重跑 → React 先执行上一次的 cleanup（`unlockAsync()`）→ 解锁后系统
+   * 又转回竖屏 → 尺寸再变 → 再锁横屏…… 结果就是播放器在横竖屏之间来回抖动，
+   * 根本没法看（v2.0.2 修）。所以：进入时记住初始方向，mount 时锁一次、
+   * unmount 时解锁一次，仅此而已。
+   */
+  const wasLandscapeOnEnter = useRef(metrics.width > metrics.height).current;
+
   useEffect(() => {
-    if (metrics.width > metrics.height) return; // TV/已是横屏，不动
+    if (wasLandscapeOnEnter) return; // TV / 进来时已经是横屏，不动
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
     return () => {
       void ScreenOrientation.unlockAsync().catch(() => {});
     };
-  }, [metrics.height, metrics.width]);
+  }, [wasLandscapeOnEnter]);
 
   /* ---------------- 直链模式（P0 兜底：手动贴 m3u8） ---------------- */
 

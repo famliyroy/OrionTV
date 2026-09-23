@@ -208,12 +208,8 @@ export default function SettingsScreen() {
           onChange={(v) => patchLayout({ bannerEnabled: v })}
           testID="setting-banner"
         />
-        <SwitchRow
-          label="显示继续观看"
-          value={layout?.continueWatchingEnabled ?? true}
-          onChange={(v) => patchLayout({ continueWatchingEnabled: v })}
-          testID="setting-continue"
-        />
+        {/* "显示继续观看"开关已随 v2.0.2 移除：继续观看并入了「我的」页，
+            这里不再提供首页开关（`continueWatchingEnabled` 键保留是为了兼容旧落盘数据）。 */}
 
         <Text style={[styles.subLabel, { fontSize: scaled(fontSize.caption) }]}>轮播高度</Text>
         <View style={styles.btnRow}>

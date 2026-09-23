@@ -28,24 +28,9 @@ import {
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import type { LucideIcon } from 'lucide-react-native';
-import {
-  BookOpen,
-  Clock,
-  Compass,
-  Film,
-  Heart,
-  MonitorPlay,
-  Music,
-  Search,
-  Settings,
-  Sparkles,
-  User,
-} from 'lucide-react-native';
+import { Compass, Search } from 'lucide-react-native';
 
-import { getAllPlayRecords, toContinueWatching } from '@api/repos/home';
 import type { BangumiCalendarItem, DoubanItem, TMDBItem } from '@api/types';
-import { peekRuntimeConfig } from '@api/repos/config';
-import { fromWireEpisodeIndex } from '@domain/playback';
 
 import { qk } from '@core/query';
 import { useAuth } from '@core/useAuth';
@@ -96,20 +81,13 @@ export default function HomeScreen() {
     staleTime: HOME_STALE_MS,
   });
 
-  const recordsQuery = useQuery({
-    queryKey: qk.playRecords(),
-    queryFn: getAllPlayRecords,
-    enabled: loggedIn,
-    staleTime: 60 * 1000,
-  });
-
   /**
-   * 每次**页面获得焦点**都重读布局 + 刷新播放记录。
+   * 每次**页面获得焦点**都重读布局。
    *
    * 为什么不能只在 mount 时读一次：Stack 导航会把首页一直挂在栈底（不是重新挂载），
-   * 于是从设置页改完"显示继续观看 / 模块顺序"返回时，首页拿的还是旧 `layout` ——
+   * 于是从设置页改完"模块顺序 / 轮播开关"返回时，首页拿的还是旧 `layout` ——
    * 表现为"改了设置看不到效果，要重启才生效"（真机验证时发现的）。
-   * 播放记录同理：刚看完一集退回来，"继续观看"必须立刻更新。
+   * （v2.0.2 起"继续观看"从首页移到「我的」页，首页不再需要刷播放记录。）
    */
   useFocusEffect(
     useCallback(() => {
@@ -117,22 +95,11 @@ export default function HomeScreen() {
       void loadHomeLayout().then((l) => {
         if (alive) setLayout(l);
       });
-      if (loggedIn) void recordsQuery.refetch();
       return () => {
         alive = false;
       };
-      // recordsQuery 是稳定引用，不需要进依赖
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loggedIn]),
+    }, []),
   );
-
-  /** 继续观看：非 localstorage 存储模式下后端只给最近 10 条 */
-  const continueWatching = useMemo(() => {
-    if (!recordsQuery.data) return [];
-    return toContinueWatching(recordsQuery.data, {
-      storageType: peekRuntimeConfig()?.STORAGE_TYPE,
-    });
-  }, [recordsQuery.data]);
 
   /**
    * 首页各模块数据。
@@ -171,34 +138,8 @@ export default function HomeScreen() {
         />
       ) : null}
 
+      {/* v2.0.2 起"继续观看"并入「我的」页（收藏 / 观看记录 / 账号三个页签），首页不再展示 */}
       <QuickEntries onPress={router.push} />
-
-      {layout?.continueWatchingEnabled !== false && continueWatching.length > 0 ? (
-        <ScrollableRow title="继续观看" testID="home-continue-watching">
-          {continueWatching.map(({ key, record, progress }) => (
-            <VideoCard
-              key={key}
-              from="playrecord"
-              title={record.title || record.search_title || '未命名'}
-              poster={record.cover}
-              source_name={record.source_name}
-              year={record.year}
-              progress={progress}
-              currentEpisode={Number(record.index) || undefined}
-              onPress={() => {
-                const [source, id] = key.split('+');
-                if (!source || !id) return;
-                router.push(
-                  `/detail?source=${encodeURIComponent(source)}&id=${encodeURIComponent(id)}&title=${encodeURIComponent(
-                    record.title || record.search_title || '',
-                  )}&episode=${fromWireEpisodeIndex(record.index)}` as Href,
-                );
-              }}
-              testID={`continue-${key}`}
-            />
-          ))}
-        </ScrollableRow>
-      ) : null}
     </View>
   );
 
@@ -361,9 +302,15 @@ interface QuickEntry {
 }
 
 function QuickEntries({ onPress }: { onPress: (href: Href) => void }) {
-  const { metrics, scaled } = useShell();
+  const { scaled } = useShell();
   const flags = useFlags();
 
+  /**
+   * v2.0.2 起快捷入口只留两个：搜索 + 源站寻片。
+   * 收藏 / 记录 / 设置 都有专门的页签（我的 / 设置），首页不再重复一份入口；
+   * 直链播放是 P0 兜底调试用的，常规用户用不上，也一并撤掉。
+   * AI 问片 / 音乐 / 漫画 / 电子书 等页面落地后，在下面把条目加回来即可。
+   */
   const entries = useMemo<QuickEntry[]>(
     () => [
       { key: 'search', label: '搜索', Icon: Search, href: '/search', visible: true, ready: true },
@@ -375,81 +322,41 @@ function QuickEntries({ onPress }: { onPress: (href: Href) => void }) {
         visible: flags.sourceSearch,
         ready: true,
       },
-      {
-        key: 'ai',
-        label: 'AI 问片',
-        Icon: Sparkles,
-        href: '/search',
-        /**
-         * 本站 `AI_ENABLED` 为 true，但 AI 问片走的是 `/api/ai/*`（独立于搜索域），
-         * L3 数据层还没接这条链路，先不暴露入口 —— 免得点进去是普通搜索。
-         */
-        visible: flags.ai && flags.aiHomepageEntry,
-        ready: false,
-      },
-      {
-        key: 'direct',
-        label: '直链播放',
-        Icon: MonitorPlay,
-        href: '/play?direct=1',
-        visible: true,
-        ready: true,
-      },
-      {
-        key: 'favorites',
-        label: '我的收藏',
-        Icon: Heart,
-        href: '/me?tab=favorites',
-        visible: true,
-        ready: true,
-      },
-      {
-        key: 'records',
-        label: '播放记录',
-        Icon: Clock,
-        href: '/me?tab=records',
-        visible: true,
-        ready: true,
-      },
-      { key: 'music', label: '音乐', Icon: Music, href: '/music', visible: flags.music, ready: false },
-      { key: 'manga', label: '漫画', Icon: Film, href: '/manga', visible: flags.manga, ready: false },
-      { key: 'books', label: '电子书', Icon: BookOpen, href: '/books', visible: flags.books, ready: false },
-      { key: 'me', label: '我的', Icon: User, href: '/me', visible: true, ready: true },
-      { key: 'settings', label: '设置', Icon: Settings, href: '/settings', visible: true, ready: true },
     ],
     [flags],
   );
 
-  const shown = entries.filter((e) => e.visible && e.ready).slice(0, 8);
+  const shown = entries.filter((e) => e.visible && e.ready);
   if (shown.length === 0) return null;
 
-  const iconSize = Math.round(scaled(20));
+  const iconSize = Math.round(scaled(22));
 
   return (
-    <View style={[styles.quickRow, { paddingHorizontal: 0, gap: spacing.sm, marginBottom: spacing.xl }]}>
+    <View style={[styles.quickRow, { gap: spacing.md, marginBottom: spacing.xl }]}>
       {shown.map((e) => (
-        <Focusable
-          key={e.key}
-          onPress={() => onPress(e.href)}
-          style={styles.quickItem}
-          testID={`quick-${e.key}`}
-        >
-          {({ focused }) => (
-            <View style={styles.quickInner}>
-              <e.Icon size={iconSize} color={focused ? palette.focus : palette.textMuted} />
-              <Text
-                style={[
-                  styles.quickLabel,
-                  { fontSize: scaled(fontSize.caption) },
-                  focused ? styles.quickLabelFocused : null,
-                ]}
-                numberOfLines={1}
-              >
-                {e.label}
-              </Text>
-            </View>
-          )}
-        </Focusable>
+        /**
+         * 槽位等分（两个入口各占一半）。`Focusable` 的 `style` 作用在内层 View，
+         * 外层 Pressable 按内容自适应，所以等分必须由槽位负责（与底栏同坑）。
+         */
+        <View key={e.key} style={styles.quickSlot}>
+          <Focusable onPress={() => onPress(e.href)} style={styles.quickItem} testID={`quick-${e.key}`}>
+            {({ focused }) => (
+              <View style={styles.quickInner}>
+                <e.Icon size={iconSize} color={focused ? palette.focus : palette.textMuted} />
+                <Text
+                  style={[
+                    styles.quickLabel,
+                    { fontSize: scaled(fontSize.small) },
+                    focused ? styles.quickLabelFocused : null,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {e.label}
+                </Text>
+              </View>
+            )}
+          </Focusable>
+        </View>
       ))}
     </View>
   );
@@ -677,17 +584,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
+  quickSlot: {
+    flex: 1,
+  },
   quickItem: {
     borderRadius: radius.md,
   },
   quickInner: {
     alignItems: 'center',
-    gap: spacing.xs / 2,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
     borderRadius: radius.md,
     backgroundColor: palette.bgElevated,
-    minWidth: 72,
   },
   quickLabel: {
     color: palette.textMuted,

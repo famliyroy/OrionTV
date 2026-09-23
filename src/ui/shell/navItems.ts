@@ -8,7 +8,7 @@
  */
 
 import type { LucideIcon } from 'lucide-react-native';
-import { Compass, Search, Settings, User } from 'lucide-react-native';
+import { Compass, Settings, User } from 'lucide-react-native';
 
 export interface NavItem {
   key: string;
@@ -20,7 +20,6 @@ export interface NavItem {
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'home', label: '首页', href: '/', icon: Compass },
-  { key: 'search', label: '搜索', href: '/search', icon: Search },
   { key: 'me', label: '我的', href: '/me', icon: User },
   { key: 'settings', label: '设置', href: '/settings', icon: Settings },
 ] as const;

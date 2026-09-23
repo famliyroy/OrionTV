@@ -156,14 +156,23 @@ export function VideoCard({
             ) : null}
 
             {onDelete ? (
-              <Focusable
-                onPress={onDelete}
-                style={styles.deleteButton}
-                focusScale={1.12}
-                testID={testID ? `${testID}-delete` : undefined}
-              >
-                <X size={iconSize + 2} color={palette.text} />
-              </Focusable>
+              /**
+               * 外层这个 `<View style={deleteWrap}>` 不能省：`Focusable` 把调用方的
+               * `style` 施加在**内层** View 上，外层 `Pressable` 仍在常规流里且按内容
+               * 自适应 —— 直接把 `position:'absolute'` 传给 Focusable，结果是一个
+               * 0 高、铺满整卡的隐形按钮（v2.0.2 真机抓到的）。定位与尺寸由这个
+               * 普通View 负责，Focusable 只负责填充与焦点环。
+               */
+              <View style={styles.deleteWrap}>
+                <Focusable
+                  onPress={onDelete}
+                  style={styles.deleteButton}
+                  focusScale={1.12}
+                  testID={testID ? `${testID}-delete` : undefined}
+                >
+                  <X size={iconSize + 2} color={palette.text} />
+                </Focusable>
+              </View>
             ) : null}
           </View>
 
@@ -224,10 +233,14 @@ const styles = StyleSheet.create({
     height: 3,
     backgroundColor: palette.primary,
   },
-  deleteButton: {
+  deleteWrap: {
     position: 'absolute',
     top: spacing.xs,
     right: spacing.xs,
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+  },
+  deleteButton: {
     width: MIN_TOUCH_TARGET,
     height: MIN_TOUCH_TARGET,
     borderRadius: radiusTokens.pill,

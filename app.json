@@ -68,7 +68,7 @@
           ]
         }
       ],
-      "versionCode": 11
+      "versionCode": 12
     },
     "ios": {
       "bundleIdentifier": "com.oriontv",
@@ -93,6 +93,6 @@
         "projectId": "b4eddfdb-08cb-4ffc-828d-a27f493e10f7"
       }
     },
-    "version": "2.0.1"
+    "version": "2.0.2"
   }
 }
