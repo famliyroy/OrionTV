@@ -677,6 +677,47 @@ export default function PlayScreen() {
     bumpControls();
     void adapter.toggle();
   }, [adapter, bumpControls]);
+
+  /* ---------------- 手势层：单击切换控制栏、双击暂停/播放 ----------------
+   *
+   * 视频区域之前没有触摸响应层——控制栏 `pointerEvents="box-none"`，
+   * 非按钮区域的触摸直接穿透到底下的 ExpoAvVideoView（它吃掉了事件但不做
+   * 任何事），导致：
+   *   1. 轻触屏幕无法隐藏/唤出控制条
+   *   2. 无法双击暂停
+   *
+   * 方案：覆盖全屏的 Pressable，用 300ms 窗口区分单击/双击。
+   * 面板打开时不响应（面板自身有遮罩层处理触摸关闭）。
+   */
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const TAP_WINDOW = 300;
+
+  const handleGestureTap = useCallback(() => {
+    if (panel) return; // 面板打开时不处理
+    if (tapTimerRef.current) {
+      // 300ms 内的第二次点击 → 双击：暂停/播放
+      clearTimeout(tapTimerRef.current);
+      tapTimerRef.current = null;
+      handleTogglePlay();
+    } else {
+      // 第一次点击：等 300ms 看是否有第二次
+      tapTimerRef.current = setTimeout(() => {
+        tapTimerRef.current = null;
+        // 单击：切换控制栏显隐
+        setControlsVisible((prev) => {
+          if (prev) {
+            // 当前可见 → 隐藏，清掉自动隐藏定时器
+            if (hideTimer.current) clearTimeout(hideTimer.current);
+            return false;
+          } else {
+            // 当前隐藏 → 显示，重置自动隐藏
+            bumpControls();
+            return true;
+          }
+        });
+      }, TAP_WINDOW);
+    }
+  }, [panel, handleTogglePlay, bumpControls]);
   const handleSeek = useCallback(
     (deltaSeconds: number) => {
       bumpControls();
@@ -808,6 +849,13 @@ export default function PlayScreen() {
           enabled={danmakuEnabled && danmakuSettings.enabled && panel !== 'danmaku'}
         />
       </View>
+
+      {/* 手势层：单击切换控制栏、双击暂停/播放。
+       *  铺满全屏，位于弹幕之上、控制条按钮之下。
+       *  pointerEvents 默认 auto，吃掉所有未被控制条按钮命中的触摸。 */}
+      {!panel ? (
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleGestureTap} />
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingOverlay} pointerEvents="none">

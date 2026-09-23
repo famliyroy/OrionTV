@@ -15,7 +15,7 @@ OrionTV is a React Native TVOS application for streaming video content, built wi
 ## ⚠️ v2 重构（`rewrite/v2` 分支）——先读这一节
 
 **从 `rewrite/v2` 分支开始的全部工作，请忽略上面第 9 行描述的那套 v1 目录。**
-v2 是照着后端契约重建的分层实现，版本号 **v2.0.3**，与 v1 **不共享任何模块**。
+v2 是照着后端契约重建的分层实现，版本号 **v2.0.4**，与 v1 **不共享任何模块**。
 
 完整架构说明、实测契约结论、已知偏差见 **[`docs/REWRITE_V2.md`](docs/REWRITE_V2.md)**。
 速览：

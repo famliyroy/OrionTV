@@ -160,10 +160,22 @@ export function computeMetrics(shell: ShellKind): LayoutMetrics {
   const scale =
     shell === 'tv' ? Math.min(1.6, Math.max(1, shortSide / 720)) : Math.min(1.15, Math.max(0.95, shortSide / 420));
 
-  const cardWidth =
-    shell === 'tv' ? 180 * scale : shell === 'tablet' ? 140 : Math.max(110, Math.round(width / 3.2));
   const gutter = shell === 'phone' ? spacing.lg : spacing.xxl;
-  const columns = Math.max(1, Math.floor((width - gutter * 2) / (cardWidth + spacing.md)));
+  const availableWidth = width - gutter * 2;
+
+  /**
+   * 先按目标卡片宽度算出列数，再按列数反算**实际卡片宽度**，让卡片填满整行。
+   *
+   * 原来先固定 cardWidth 再算 columns，结果右侧留下 100dp+ 的空白（手机上
+   * 两张窄卡片占不满 360dp+ 的可用宽度）。现在是：
+   *   targetWidth → columns → cardWidth = (可用宽度 - 所有间距) / columns
+   * 这样无论屏幕多宽，卡片总是占满一行，没有浪费。
+   */
+  const targetCardWidth =
+    shell === 'tv' ? 180 * scale : shell === 'tablet' ? 140 : Math.max(110, Math.round(width / 3.2));
+  const gap = spacing.md;
+  const columns = Math.max(1, Math.floor((availableWidth + gap) / (targetCardWidth + gap)));
+  const cardWidth = Math.floor((availableWidth - gap * (columns - 1)) / columns);
 
   return { width, height, isLandscape, scale, columns, cardWidth, gutter };
 }

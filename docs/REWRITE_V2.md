@@ -1,6 +1,6 @@
 # OrionTV 原生客户端 v2 重构说明
 
-> 分支：`rewrite/v2`　当前版本：**v2.0.3**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
+> 分支：`rewrite/v2`　当前版本：**v2.0.4**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
 >
 > `custom` 分支保持 v1.6.0 可发布状态不动，本分支是**重建**而非增量修改。
 

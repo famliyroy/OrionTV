@@ -38,8 +38,10 @@ import type { TrackEntry } from '@danmaku/types';
 
 /** 与 Web 端 `danmakuMaxCount` 的默认值保持一致 */
 const DEFAULT_MAX_COUNT = 5000;
-/** 单帧最小重绘间隔 */
-const DEFAULT_FRAME_INTERVAL_MS = 16;
+/** 单帧最小重绘间隔：引擎不需要跟 UI 帧率一样快，弹幕动画由
+ *  reanimated 的 withTiming 在 UI 线程以 60fps 插值，
+ *  JS 线程只需要 ~100ms 刷新一次在屏集合即可。 */
+const DEFAULT_FRAME_INTERVAL_MS = 100;
 /**
  * 在屏条数的**兜底**阈值。
  *
@@ -246,7 +248,12 @@ interface DanmakuLineProps {
   settings: DanmakuSettings;
 }
 
-function DanmakuLine({ entry, width, currentTime, playing, settings }: DanmakuLineProps) {
+/**
+ * 单条弹幕。React.memo 以 entry.index 和 playing 为主要比较点——
+ * 同一条弹幕只要 index 不变就不需要重渲染（entry 是引擎产出的不可变对象）。
+ * 整个 lines 数组变化时只有新增/移除的条目会触发 mount/unmount。
+ */
+const DanmakuLine = React.memo(function DanmakuLine({ entry, width, currentTime, playing, settings }: DanmakuLineProps) {
   /* 文本后处理：简繁转换 → maxlength 截断（顺序与 Web 端一致） */
   const text = useMemo(() => {
     const converted = settings.traditionalToSimplified ? convertText(entry.text, true) : entry.text;
@@ -307,44 +314,17 @@ function DanmakuLine({ entry, width, currentTime, playing, settings }: DanmakuLi
     transform: [{ translateX: x.value }],
   }));
 
-  return (
-    <Animated.View
-      style={[styles.line, { top: entry.y, width: paintWidth, height: paintHeight }, animatedStyle]}
-    >
-      <DanmakuText
-        text={text}
-        color={entry.color}
-        fontSize={entry.fontSize}
-        lineHeight={paintHeight}
-        stroke={!!settings.stroke}
-      />
-    </Animated.View>
-  );
-}
-
-interface DanmakuTextProps {
-  text: string;
-  color: string;
-  fontSize: number;
-  lineHeight: number;
-  stroke: boolean;
-}
-
-/** 描边：v2.0.3 起用单 Text + textShadow 实现。
- *
- * 原来是 4 个绝对定位的描边 Text + 1 个主 Text（每条弹幕 5 个原生视图），
- * 极端密度下同屏 400 条 = 2000 个原生 Text（measure/layout/draw 全走 yoga +
- * 原生文本管线），是弹幕渲染的最大成本。RN 不支持 Web 的
- * `-webkit-text-stroke`，但 `textShadow` 的模糊光晕在 10 英尺观看距离下
- * 观感与 1px 描边几乎无差，节点数从 5× 降到 1×。 */
-function DanmakuText({ text, color, fontSize, lineHeight, stroke }: DanmakuTextProps) {
-  const style = useMemo<TextStyle>(
+  /**
+   * 描边样式在 settings 不变时只算一次（同一弹幕生命期内 settings 不会变）。
+   * 内联对象每次渲染都新建，会让 Animated.View 白重渲染。
+   */
+  const textStyle = useMemo<TextStyle>(
     () => ({
-      fontSize,
-      lineHeight,
+      fontSize: entry.fontSize,
+      lineHeight: paintHeight,
       includeFontPadding: false,
-      color,
-      ...(stroke
+      color: entry.color,
+      ...(settings.stroke
         ? {
             textShadowColor: palette.danmakuStroke,
             textShadowRadius: 3,
@@ -352,15 +332,21 @@ function DanmakuText({ text, color, fontSize, lineHeight, stroke }: DanmakuTextP
           }
         : null),
     }),
-    [fontSize, lineHeight, color, stroke],
+    [entry.fontSize, paintHeight, entry.color, settings.stroke],
   );
 
   return (
-    <Text numberOfLines={1} ellipsizeMode="clip" style={style}>
-      {text}
-    </Text>
+    <Animated.View
+      style={[styles.line, { top: entry.y, width: paintWidth, height: paintHeight }, animatedStyle]}
+    >
+      <Text numberOfLines={1} ellipsizeMode="clip" style={textStyle}>
+        {text}
+      </Text>
+    </Animated.View>
   );
-}
+});
+
+/* DanmakuText 已内联到 DanmakuLine 中（省一层组件开销 + 省 useMemo 调用） */
 
 /* ------------------------------------------------------------------ *
  * 调试角标
