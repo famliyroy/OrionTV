@@ -31,7 +31,7 @@ export interface ExpoAvAdapterHooks {
   onError?: (e: Error) => void;
 }
 
-/** 适配器持有的初始状态：未装载、倍速 1.0 */
+/** 适配器持有的初始状态：未装载、倍速 1.0、音量 1.0 */
 function createInitialState(): PlayerState {
   return {
     status: 'idle',
@@ -39,6 +39,7 @@ function createInitialState(): PlayerState {
     durationMs: 0,
     bufferedMs: 0,
     rate: 1,
+    volume: 1,
     isLive: false,
   };
 }
@@ -98,8 +99,9 @@ export class ExpoAvAdapter implements PlayerCore {
         {
           ...(source.startPositionMs ? { positionMillis: source.startPositionMs } : {}),
           shouldPlay: true,
-          // 换集后保留用户当前选的倍速，否则每次切集都要重选
+          // 换集后保留用户当前选的倍速与音量，否则每次切集都要重设
           rate: this.state.rate,
+          volume: this.state.volume,
           progressUpdateIntervalMillis: PROGRESS_UPDATE_INTERVAL_MS,
         },
       );
@@ -145,6 +147,14 @@ export class ExpoAvAdapter implements PlayerCore {
   async setRate(rate: number): Promise<void> {
     await this.guard('setRate', async () => {
       this.handleStatus(await this.requireVideo().setRateAsync(rate, true));
+    });
+  }
+
+  async setVolume(volume: number): Promise<void> {
+    const v = Math.max(0, Math.min(1, volume));
+    this.emit({ volume: v });
+    await this.guard('setVolume', async () => {
+      this.handleStatus(await this.requireVideo().setStatusAsync({ volume: v }));
     });
   }
 
@@ -203,6 +213,7 @@ export class ExpoAvAdapter implements PlayerCore {
       durationMs,
       bufferedMs: status.playableDurationMillis ?? 0,
       rate: status.rate ?? this.state.rate,
+      volume: typeof status.volume === 'number' ? status.volume : this.state.volume,
       isLive,
       error: undefined,
     });

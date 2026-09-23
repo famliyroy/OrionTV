@@ -21,6 +21,7 @@ export * from './adapters/expoAvAdapter';
 /* 叠加层 */
 export * from './overlays/DanmakuOverlay';
 export * from './overlays/SkipOverlay';
+export * from './overlays/GestureOverlay';
 
 /* 控制条 */
 export * from './controls/PlayerControls';

@@ -37,10 +37,15 @@ export function ShellProvider({ shell, children }: ShellProviderProps) {
   const [windowSize, setWindowSize] = useState<ScaledSize>(() => Dimensions.get('window'));
 
   useEffect(() => {
+    if (typeof Dimensions.addEventListener !== 'function') return;
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       setWindowSize(window);
     });
-    return () => subscription.remove();
+    return () => {
+      if (subscription && typeof subscription.remove === 'function') {
+        subscription.remove();
+      }
+    };
   }, []);
 
   // windowSize 是刻意保留的依赖（仅作重算触发器），不参与计算

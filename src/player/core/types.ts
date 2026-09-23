@@ -34,6 +34,8 @@ export interface PlayerState {
   durationMs: number;
   bufferedMs: number;
   rate: number;
+  /** 音量 0.0 - 1.0 */
+  volume: number;
   error?: string;
   /** durationMs 缺失或为 0 时视为直播（m3u8 直播流在部分设备上拿不到时长） */
   isLive: boolean;
@@ -51,6 +53,7 @@ export interface PlayerCore {
   toggle(): Promise<void>;
   seekTo(ms: number): Promise<void>;
   setRate(rate: number): Promise<void>;
+  setVolume(volume: number): Promise<void>;
   unload(): Promise<void>;
   getState(): PlayerState;
 }
