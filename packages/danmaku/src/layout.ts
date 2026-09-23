@@ -106,21 +106,34 @@ export class DanmakuLayoutEngine {
 
   /**
    * 更新配置。视口尺寸变化会清空轨道状态（轨道数变了，旧 y 全部失效）。
+   * 返回值：本次是否触发了「reset + 全量回放」（调用方据此决定要不要额外 seek，
+   * 避免设置变更时回放两遍 —— v2.0.3 修复）。
    */
-  setConfig(patch: Partial<DfmConfig>): void {
+  setConfig(patch: Partial<DfmConfig>): boolean {
     const prev = this.config;
     this.config = { ...prev, ...patch };
-    if (
+    /**
+     * v2.0.3 修复死开关：配置里的 `mergeDuplicate` / `mergeWindowSeconds` 原来
+     * 存了却没人读（设置面板里"合并重复弹幕"是摆设），这里同步到 FilterSystem。
+     */
+    if (this.config.mergeDuplicate !== prev.mergeDuplicate) {
+      this.filters.duplicateMerge = this.config.mergeDuplicate;
+    }
+    if (this.config.mergeWindowSeconds !== prev.mergeWindowSeconds) {
+      this.filters.mergeWindowMs = this.config.mergeWindowSeconds * 1000;
+    }
+    const geometryChanged =
       this.config.viewWidth !== prev.viewWidth ||
       this.config.viewHeight !== prev.viewHeight ||
       this.config.fontSize !== prev.fontSize ||
       this.config.displayArea !== prev.displayArea ||
-      this.config.trackGapRatio !== prev.trackGapRatio
-    ) {
+      this.config.trackGapRatio !== prev.trackGapRatio;
+    if (geometryChanged) {
       this.reset();
       this.replayTo(this.lastTimeMs);
     }
     this.syncContext();
+    return geometryChanged;
   }
 
   getFilters(): FilterSystem {

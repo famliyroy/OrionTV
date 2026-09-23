@@ -137,8 +137,30 @@ export default function SearchScreen() {
     setLoginRequired(false);
     setStreaming(true);
 
-    const publish = () => setBuckets({ ...bucketsRef.current });
+    /**
+     * 发布节流（v2.0.3）：SSE 每个源到达都会触发一次全量发布 —— 59 个源就是
+     * 59 次「三条 useMemo 全量重算 + 结果列表整体重渲染」。改为 ~120ms 合并一帧，
+     * 完成/出错时强制 flush 一次，流式的"增量感"不受影响。
+     */
+    let publishTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      publishTimer = null;
+      setBuckets({ ...bucketsRef.current });
+    };
+    const publish = () => {
+      if (publishTimer) return;
+      publishTimer = setTimeout(flush, 120);
+    };
+    const publishNow = () => {
+      if (publishTimer) {
+        clearTimeout(publishTimer);
+        publishTimer = null;
+      }
+      setBuckets({ ...bucketsRef.current });
+    };
     const opts = { privateOnly: isSourceMode || undefined };
+    /** 本趟搜索是否已被取消（换词/卸载）：在飞的 fallback 回调必须先查它 */
+    let cancelled = false;
     let sawAnyEvent = false;
 
     /**
@@ -183,7 +205,7 @@ export default function SearchScreen() {
           publish();
         },
         onComplete: () => {
-          publish();
+          publishNow();
         },
         onDone: () => {
           if (!sawAnyEvent) void runFallback(submitted);
@@ -202,6 +224,8 @@ export default function SearchScreen() {
     async function runFallback(q: string) {
       try {
         const results = await search(q, { privateOnly: isSourceMode || undefined });
+        // 请求在飞期间用户已经换了词 / 离开页面：结果作废，别污染新状态
+        if (cancelled) return;
         bucketsRef.current = {
           __fallback: {
             source: '__fallback',
@@ -210,8 +234,9 @@ export default function SearchScreen() {
             results,
           },
         };
-        publish();
+        publishNow();
       } catch (err) {
+        if (cancelled) return;
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           // 站点要求登录：给入口，别显示"出错了 Unauthorized"
           setLoginRequired(true);
@@ -225,11 +250,16 @@ export default function SearchScreen() {
           setFallbackError(msg);
         }
       } finally {
-        setStreaming(false);
+        if (!cancelled) setStreaming(false);
       }
     }
 
     return () => {
+      cancelled = true;
+      if (publishTimer) {
+        clearTimeout(publishTimer);
+        publishTimer = null;
+      }
       streamRef.current?.close();
       streamRef.current = null;
     };
@@ -237,7 +267,24 @@ export default function SearchScreen() {
 
   /* ---------------- 派生数据 ---------------- */
 
-  const allResults = useMemo(() => Object.values(buckets).flatMap((b) => b.results), [buckets]);
+  /**
+   * 聚合时按 `source+id` 去重（v2.0.3）：同源同 id 的重复条目本是脏数据，
+   * 去掉后 key 才能稳定 —— 原来的 keyExtractor 带数组下标，筛选/流式新增源
+   * 导致重排时全部 key 位移，可见行整体重挂载（RemoteImage 重新解码、TV 丢焦点）。
+   */
+  const allResults = useMemo(() => {
+    const seen = new Set<string>();
+    const out: SearchResult[] = [];
+    for (const b of Object.values(buckets)) {
+      for (const r of b.results) {
+        const k = `${r.source}-${r.id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(r);
+      }
+    }
+    return out;
+  }, [buckets]);
   const options = useMemo(() => collectFilterOptions(allResults), [allResults]);
   const filtered = useMemo(() => applySearchFilter(allResults, filter), [allResults, filter]);
   const failedCount = useMemo(
@@ -390,7 +437,7 @@ export default function SearchScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(r, i) => `${r.source}-${r.id}-${i}`}
+          keyExtractor={(r) => `${r.source}-${r.id}`}
           numColumns={metrics.columns}
           key={`cols-${metrics.columns}`}
           renderItem={renderCard}
@@ -404,6 +451,9 @@ export default function SearchScreen() {
           showsVerticalScrollIndicator={false}
           removeClippedSubviews={!isTV}
           initialNumToRender={metrics.columns * 2}
+          maxToRenderPerBatch={metrics.columns * 2}
+          windowSize={7}
+          updateCellsBatchingPeriod={50}
         />
       )}
     </Screen>

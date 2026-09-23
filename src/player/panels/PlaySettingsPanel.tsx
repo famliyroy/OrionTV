@@ -50,7 +50,7 @@ export interface PlaySettingsPanelProps {
   capabilities?: Capabilities;
 }
 
-export function PlaySettingsPanel({
+export const PlaySettingsPanel = React.memo(function PlaySettingsPanel({
   visible,
   onClose,
   rate,
@@ -174,7 +174,7 @@ export function PlaySettingsPanel({
       ) : null}
     </SidePanel>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 

@@ -15,8 +15,9 @@ import { Platform } from 'react-native';
 import CookieManager from '@react-native-cookies/cookies';
 import { StorageKeys, kv } from '@runtime/storage';
 import type { AuthInfo, LoginResponse } from './types';
+import { clearSiteScopedCaches } from './repos/maintenance';
 
-export const APP_VERSION = '2.0.2';
+export const APP_VERSION = '2.0.3';
 export const DEFAULT_BASE_URL = 'https://tv.668664.xyz';
 
 /**
@@ -111,6 +112,16 @@ export class ApiClient {
      * `hydrate()` 是直接赋值不走本方法，所以不会形成写回环。
      */
     void kv.setString(StorageKeys.API_BASE_URL, next);
+    /**
+     * 凭据同样必须清盘 + 清原生 Cookie 库：
+     * 只清内存态的话，重启后 `hydrate()` 会把**旧站**的 `auth` cookie 读回来，
+     * 直接拿 A 站凭据请求 B 站（v2.0.3 代码审查发现）；播放器/WebView 侧持有的
+     * 原生 cookie 也要一起清，否则播放器仍带着旧站凭据。
+     */
+    void kv.remove(StorageKeys.AUTH_COOKIE);
+    void CookieManager.clearAll().catch(() => {});
+    // 站点级缓存（首页行、播放记录/收藏快照、运行配置）也要作废，避免 B 站看到 A 站数据
+    void clearSiteScopedCaches();
   }
 
   /** 站点根（协议 + host），用于拼静态资源与代理地址 */
@@ -248,10 +259,23 @@ export class ApiClient {
 
     this.refreshInFlight = (async () => {
       try {
-        const res = await this.rawRequest(REFRESH_PATH, { method: 'POST' }, false);
+        /**
+         * 必须显式带 Cookie：v2.0.3 代码审查发现这里原来 `withCookie=false`，
+         * 仅靠"原生 Cookie 库会帮忙附带"的隐式行为（跨平台不可靠），
+         * 一旦不生效，续期必 401 → 用户 4 小时后被静默登出。
+         */
+        const res = await this.rawRequest(REFRESH_PATH, { method: 'POST' }, true);
         if (res.ok) {
           const body = (await safeJson(res)) as LoginResponse | null;
           await this.setSession(res, body ?? undefined);
+          /**
+           * 续期成功但响应既无 Set-Cookie 也无 body.auth 时（后端形态差异），
+           * `authInfo.timestamp` 不会被刷新，`isAccessExpired()` 会永远判过期，
+           * 导致每个请求前都白跑一次续期。至少把内存态的时间戳推到现在。
+           */
+          if (!body?.auth && this.authInfo) {
+            this.authInfo = { ...this.authInfo, timestamp: Date.now() };
+          }
           return true;
         }
         if (res.status === 401 || res.status === 403) {
@@ -308,6 +332,15 @@ export class ApiClient {
 
     let attempt = 0;
     let refreshed = false;
+
+    /**
+     * 本地预判过期（v2.0.3 接上，原来 `isAccessExpired` 是死代码）：
+     * token 过期后原来每个请求都先白撞一次 401 → 续期 → 重放，
+     * 现在过期即先续期再发，省一个往返。续期失败/退避期则按原路径走。
+     */
+    if (authed && this.cookie && this.isAccessExpired()) {
+      await this.refreshSession();
+    }
 
     for (;;) {
       let res: Response;
@@ -427,6 +460,13 @@ export class ApiClient {
     const xhr = new XMLHttpRequest();
     let consumed = 0;
     let buffer = '';
+    /**
+     * 上次在 buffer 里扫过的位置（v2.0.3 优化）：原来的实现每个 XHR 进度回调
+     * 都对**不断增长的** buffer 从头 `search`，若单个事件很大（如 source_result
+     * 携带整源结果集），事件到齐前的每次回调都是一次全扫，退化成 O(n²)。
+     * 记住扫描位置，下次从 `scanFrom - 4` 起扫（-4 是为了覆盖跨回调的 \r\n\r\n）。
+     */
+    let scanFrom = 0;
     let finished = false;
 
     const flush = (isFinal: boolean) => {
@@ -435,17 +475,28 @@ export class ApiClient {
         buffer += text.slice(consumed);
         consumed = text.length;
       }
-      // SSE 以空行分隔事件块
-      let idx: number;
-      while ((idx = buffer.search(/\r?\n\r?\n/)) >= 0) {
+      // SSE 以空行分隔事件块（\n\n / \r\n\n / \n\r\n / \r\n\r\n 四种形态）
+      let from = Math.max(0, scanFrom - 4);
+      for (;;) {
+        const rel = buffer.slice(from).search(/\r?\n\r?\n/);
+        if (rel < 0) break;
+        const idx = from + rel;
         const rawEvent = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + rawEvent.length + (buffer[idx] === '\r' ? 4 : 2));
+        let sepLen = 2;
+        if (buffer.startsWith('\r\n\r\n', idx) || buffer.startsWith('\r\n\n', idx) || buffer.startsWith('\n\r\n', idx)) {
+          sepLen = buffer.startsWith('\r\n\r\n', idx) ? 4 : 3;
+        }
+        const cut = idx + sepLen;
+        const prevScanFrom = scanFrom;
+        buffer = buffer.slice(cut);
+        from = Math.max(0, prevScanFrom - cut);
         const dataLines = rawEvent
           .split(/\r?\n/)
           .filter((l) => l.startsWith('data:'))
           .map((l) => l.slice(5).trimStart());
         if (dataLines.length) handlers.onEvent(dataLines.join('\n'));
       }
+      scanFrom = buffer.length;
       if (isFinal) {
         // 末块可能没有结尾空行
         const tail = buffer.trim();
@@ -453,6 +504,7 @@ export class ApiClient {
           handlers.onEvent(tail.slice(5).trimStart());
         }
         buffer = '';
+        scanFrom = 0;
       }
     };
 

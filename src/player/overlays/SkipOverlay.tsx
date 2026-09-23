@@ -29,7 +29,7 @@ export interface SkipOverlayProps {
   position?: 'left' | 'right';
 }
 
-export function SkipOverlay({
+export const SkipOverlay = React.memo(function SkipOverlay({
   visible,
   label,
   secondsLeft,
@@ -68,7 +68,7 @@ export function SkipOverlay({
       </Focusable>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   root: {

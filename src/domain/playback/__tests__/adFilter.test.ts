@@ -179,7 +179,9 @@ describe('adFilter: getAdFilterRunner 版本与缓存', () => {
     expect(mockCode).toHaveBeenCalledTimes(1);
   });
 
-  test('版本变化触发重新拉取源码', async () => {
+  test('版本变化（force 刷新）触发重新拉取源码', async () => {
+    // v2.0.3：版本探测加了 5min TTL（播放页每次进入不再白打一发请求），
+    // TTL 内要立刻感知管理员改代码，必须显式 force。
     mockVersion.mockResolvedValue(1);
     mockCode.mockResolvedValue({ code: 'v1', version: 1 });
     await getAdFilterRunner();
@@ -187,7 +189,7 @@ describe('adFilter: getAdFilterRunner 版本与缓存', () => {
 
     mockVersion.mockResolvedValue(2);
     mockCode.mockResolvedValue({ code: 'v2', version: 2 });
-    await getAdFilterRunner();
+    await getAdFilterRunner({ force: true });
     expect(mockCode).toHaveBeenCalledTimes(2);
   });
 

@@ -128,7 +128,12 @@ export default function HomeScreen() {
     [homeData, router],
   );
 
-  const header = (
+  /**
+   * header useMemo（v2.0.3）：原来 header 是普通 JSX 变量，layout / homeQuery
+   * 任何一次状态变化都会重建整个 header 子树（轮播 + 快捷入口）。
+   */
+  const header = useMemo(
+    () => (
     <View>
       {layout?.bannerEnabled !== false ? (
         <HomeBanner
@@ -141,6 +146,10 @@ export default function HomeScreen() {
       {/* v2.0.2 起"继续观看"并入「我的」页（收藏 / 观看记录 / 账号三个页签），首页不再展示 */}
       <QuickEntries onPress={router.push} />
     </View>
+    ),
+    // router.push 是稳定引用；layout 的其它字段不影响 header
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout?.bannerEnabled, layout?.bannerHeightScale, homeData?.movies, router],
   );
 
   if (homeQuery.isError && !homeQuery.data) {
@@ -224,6 +233,53 @@ function HomeBanner({
     [slides.length, slideWidth],
   );
 
+  /**
+   * renderItem / keyExtractor / getItemLayout 稳定化（v2.0.3）：原来每次渲染都
+   * 新建，轮播每 6s 翻页 + 每次父组件渲染都会让 FlatList 重渲染全部可见 slide
+   * （每张 slide 内含 RemoteImage，白白走一遍 reconciler）。
+   */
+  const renderSlide = useCallback(
+    ({ item }: { item: DoubanItem }) => (
+      <Focusable
+        onPress={() => {
+          const href = resolveCardHref({ title: item.title, douban_id: item.id });
+          if (href) onPress(href);
+        }}
+        style={{ width: slideWidth, height: slideHeight }}
+        testID={`banner-${item.id}`}
+      >
+        <View style={[styles.slide, { width: slideWidth, height: slideHeight }]}>
+          <RemoteImage uri={item.poster} width={slideWidth} height={slideHeight} radius={radius.lg} />
+          <View style={styles.slideOverlay}>
+            <Text
+              style={[styles.slideTitle, { fontSize: scaled(shell === 'phone' ? fontSize.heading : fontSize.tvTitle) }]}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            {item.rate ? (
+              <Text style={[styles.slideMeta, { fontSize: scaled(fontSize.small) }]}>
+                {item.rate} 分{item.year ? ` · ${item.year}` : ''}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      </Focusable>
+    ),
+    [slideWidth, slideHeight, onPress, scaled, shell],
+  );
+
+  const bannerKeyExtractor = useCallback((i: DoubanItem) => `banner-${i.id}`, []);
+
+  const bannerGetItemLayout = useCallback(
+    (_: unknown, index: number) => ({
+      length: slideWidth,
+      offset: slideWidth * index,
+      index,
+    }),
+    [slideWidth],
+  );
+
   if (slides.length === 0) return null;
 
   return (
@@ -235,39 +291,9 @@ function HomeBanner({
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onMomentumEnd}
-        keyExtractor={(i) => `banner-${i.id}`}
-        getItemLayout={(_, index) => ({
-          length: slideWidth,
-          offset: slideWidth * index,
-          index,
-        })}
-        renderItem={({ item }) => (
-          <Focusable
-            onPress={() => {
-              const href = resolveCardHref({ title: item.title, douban_id: item.id });
-              if (href) onPress(href);
-            }}
-            style={{ width: slideWidth, height: slideHeight }}
-            testID={`banner-${item.id}`}
-          >
-            <View style={[styles.slide, { width: slideWidth, height: slideHeight }]}>
-              <RemoteImage uri={item.poster} width={slideWidth} height={slideHeight} radius={radius.lg} />
-              <View style={styles.slideOverlay}>
-                <Text
-                  style={[styles.slideTitle, { fontSize: scaled(shell === 'phone' ? fontSize.heading : fontSize.tvTitle) }]}
-                  numberOfLines={1}
-                >
-                  {item.title}
-                </Text>
-                {item.rate ? (
-                  <Text style={[styles.slideMeta, { fontSize: scaled(fontSize.small) }]}>
-                    {item.rate} 分{item.year ? ` · ${item.year}` : ''}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-          </Focusable>
-        )}
+        keyExtractor={bannerKeyExtractor}
+        getItemLayout={bannerGetItemLayout}
+        renderItem={renderSlide}
       />
 
       {slides.length > 1 ? (

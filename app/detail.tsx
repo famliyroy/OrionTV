@@ -316,6 +316,8 @@ export default function DetailScreen() {
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={!isTV}
             initialNumToRender={24}
+            maxToRenderPerBatch={24}
+            windowSize={7}
           />
         )}
       </View>

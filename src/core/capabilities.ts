@@ -125,6 +125,9 @@ function defaultsFromServerConfig(sc: ServerConfig | null): RuntimeConfig {
   };
 }
 
+/** load() 的单飞 Promise（见 load 注释） */
+let loadInFlight: Promise<void> | null = null;
+
 export const useCapabilityStore = create<CapabilityState>((set, get) => ({
   loaded: false,
   loading: false,
@@ -137,27 +140,40 @@ export const useCapabilityStore = create<CapabilityState>((set, get) => ({
   denied: [],
 
   load: async (force = false) => {
-    if (get().loading) return;
+    /**
+     * 单飞：在飞的加载直接共享 promise，而不是静默丢弃。
+     * v2.0.3 审查发现两个语义问题：① 原来 `if (loading) return;` 会把并发到来的
+     * `force=true`（登录/登出触发）直接吞掉，内存缓存拿不到强制刷新；
+     * ② serverConfig 与 runtimeConfig 串行 await，两者无依赖，可并行缩短启动耗时。
+     */
+    if (loadInFlight) return loadInFlight;
     set({ loading: true, error: null });
-    try {
-      const serverConfig = await getServerConfig(force);
-      const runtime = await getRuntimeConfig(force);
-      set({
-        serverConfig,
-        runtimeConfig: runtime ?? defaultsFromServerConfig(serverConfig),
-        runtimeConfigResolved: !!runtime,
-        loaded: true,
-        loading: false,
-        role: (apiClient.getRole() as Role) ?? null,
-        loggedIn: apiClient.isLoggedIn(),
-      });
-    } catch (e) {
-      set({
-        loading: false,
-        loaded: true,
-        error: e instanceof Error ? e.message : '获取站点配置失败',
-      });
-    }
+    loadInFlight = (async () => {
+      try {
+        const [serverConfig, runtime] = await Promise.all([
+          getServerConfig(force),
+          getRuntimeConfig(force),
+        ]);
+        set({
+          serverConfig,
+          runtimeConfig: runtime ?? defaultsFromServerConfig(serverConfig),
+          runtimeConfigResolved: !!runtime,
+          loaded: true,
+          loading: false,
+          role: (apiClient.getRole() as Role) ?? null,
+          loggedIn: apiClient.isLoggedIn(),
+        });
+      } catch (e) {
+        set({
+          loading: false,
+          loaded: true,
+          error: e instanceof Error ? e.message : '获取站点配置失败',
+        });
+      } finally {
+        loadInFlight = null;
+      }
+    })();
+    return loadInFlight;
   },
 
   refreshAuth: () =>
@@ -167,7 +183,8 @@ export const useCapabilityStore = create<CapabilityState>((set, get) => ({
     }),
 
   markDenied: (key) => {
-    const next = Array.from(new Set([...get().denied, key]));
+    if (get().denied.includes(key)) return; // 已记录过就别重复 set + 落盘（403 风暴时）
+    const next = [...get().denied, key];
     set({ denied: next });
     void kv.setObject(DENIED_KEY, next);
   },
@@ -241,7 +258,8 @@ export function selectFlags(s: CapabilityState): Flags {
   const allow = (key: FeatureKey, siteSwitch: boolean | undefined) => {
     if (siteSwitch === false) return false;
     if (denied.has(key)) return false;
-    return siteSwitch !== undefined ? true : true;
+    // 站点开关未显式给出（undefined）时乐观显示 —— 与模块头注释的乐观显示 + 403 降级一致
+    return true;
   };
 
   return {

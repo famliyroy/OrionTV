@@ -240,6 +240,9 @@ export function resetAdFilterRunnerCache(): void {
   cachedCode = '';
   cachedCustomRunner = null;
   cachedCustomKey = '';
+  // 换站时版本探测记忆也要作废（B 站的版本号可能不同）
+  versionProbeValue = null;
+  versionProbeAt = 0;
 }
 
 /**
@@ -252,13 +255,24 @@ export function resetAdFilterRunnerCache(): void {
  *
  * 缓存：内存（版本 / 源码 / 运行器实例）+ 磁盘（CACHE_AD_FILTER_CODE，由 repo 写入）。
  */
+/** 版本号探测 TTL（v2.0.3）：原来每次进播放页都打一发版本请求，加 5min 缓存 */
+let versionProbeAt = 0;
+let versionProbeValue: number | null = null;
+const VERSION_PROBE_TTL_MS = 5 * 60 * 1000;
+
 export async function getAdFilterRunner(opts: { force?: boolean } = {}): Promise<AdFilterRunner> {
   let remoteVersion: number | null = null;
-  try {
-    const v = await getAdFilterVersion();
-    remoteVersion = typeof v === 'number' && Number.isFinite(v) ? v : null;
-  } catch {
-    remoteVersion = null;
+  if (!opts.force && versionProbeValue !== null && Date.now() - versionProbeAt < VERSION_PROBE_TTL_MS) {
+    remoteVersion = versionProbeValue;
+  } else {
+    try {
+      const v = await getAdFilterVersion();
+      remoteVersion = typeof v === 'number' && Number.isFinite(v) ? v : null;
+      versionProbeValue = remoteVersion;
+      versionProbeAt = Date.now();
+    } catch {
+      remoteVersion = null;
+    }
   }
 
   const versionChanged = remoteVersion !== null && remoteVersion !== cachedVersion;

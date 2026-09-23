@@ -183,6 +183,9 @@ export default function MeScreen() {
             }}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={!isTV}
+            initialNumToRender={metrics.columns * 2}
+            maxToRenderPerBatch={metrics.columns * 2}
+            windowSize={7}
             ListHeaderComponent={
               <Focusable
                 onPress={() => mutation.mutate(clearAllFavorites)}
@@ -248,6 +251,9 @@ export default function MeScreen() {
             }}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={!isTV}
+            initialNumToRender={metrics.columns * 2}
+            maxToRenderPerBatch={metrics.columns * 2}
+            windowSize={7}
             ListHeaderComponent={
               <Focusable
                 onPress={() => mutation.mutate(clearAllPlayRecords)}

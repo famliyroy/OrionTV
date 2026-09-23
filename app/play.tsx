@@ -239,7 +239,9 @@ export default function PlayScreen() {
     if (skipConfigQuery.data) setSkipConfig(skipConfigQuery.data);
   }, [skipConfigQuery.data]);
 
-  const skipTracker = useRef(new SkipTracker()).current;
+  const skipTrackerRef = useRef<SkipTracker | null>(null);
+  if (!skipTrackerRef.current) skipTrackerRef.current = new SkipTracker();
+  const skipTracker = skipTrackerRef.current;
   const [skipPrompt, setSkipPrompt] = useState<{ decision: SkipDecision; label: string } | null>(null);
 
   /* ---------------- 弹幕 ---------------- */
@@ -492,7 +494,7 @@ export default function PlayScreen() {
         // 静默：进度上报失败不值得打断播放
       });
     },
-    [currentIndex, episodes.length, id, isDirectMode, loggedIn, params.poster, params.sourceName, params.title, params.total, params.year, source, title],
+    [currentIndex, episodes.length, id, isDirectMode, loggedIn, params.poster, params.sourceName, params.total, params.year, source, title],
   );
 
   /* ---------------- 播放结束 → 下一集 ---------------- */
@@ -565,26 +567,43 @@ export default function PlayScreen() {
 
   /* ---------------- 卸载时兜底落库 ---------------- */
 
+  /**
+   * v2.0.3 修复"卸载 flush 读到陈旧 state"：原实现把 `currentIndex /
+   * episodes.length / loggedIn` 直接关进 `[]` effect 的闭包，拿到的是**首渲染**
+   * 的值（首渲染时 episodes 必为空）。用户从第 5 集退出时，会用「第 5 集的新进度」
+   * 配上「第 0 集 / 总集数 0」写库，把节流期间已上报的正确记录覆盖掉。
+   * 这里改成每次提交后把最新上下文同步进 ref，cleanup 一律读 ref。
+   */
+  const flushCtxRef = useRef({ currentIndex, totalEpisodes: episodes.length, loggedIn, isDirectMode });
+  useEffect(() => {
+    flushCtxRef.current = {
+      currentIndex,
+      totalEpisodes: episodes.length,
+      loggedIn,
+      isDirectMode,
+    };
+  });
+
   useEffect(() => {
     return () => {
+      const ctx = flushCtxRef.current;
       const s = lastStateRef.current;
-      if (isDirectMode || !loggedIn || !id || !source) return;
+      if (ctx.isDirectMode || !ctx.loggedIn || !id || !source) return;
       const currentTime = s.positionMs / 1000;
       if (currentTime < 1) return;
       const record = buildPlayRecord({
         media: { id, source, title },
-        episodeIndex: currentIndex,
+        episodeIndex: ctx.currentIndex,
         currentTime,
         duration: s.isLive ? 0 : s.durationMs / 1000,
-        totalEpisodes: episodes.length,
+        totalEpisodes: ctx.totalEpisodes,
         searchTitle: title,
       });
       void savePlayRecord(playRecordKey(source, id), record).catch(() => {});
       void adapter.unload().catch(() => {});
     };
-    // 只在卸载时执行一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // id/source/title 是路由参数，整个页面生命周期内不变；其余一律走 flushCtxRef
+  }, [id, source, title]);
 
   /* ---------------- 返回键：先关弹层 ---------------- */
 
@@ -643,6 +662,100 @@ export default function PlayScreen() {
     );
   }
 
+  /* ---------------- 控制条 / 面板回调（useCallback 稳定引用） ----------------
+   *
+   * v2.0.3 性能修复：适配器每 250ms 推一次进度 → setPlayerState → 本页整体重渲染。
+   * 传给 PlayerControls / 三个面板的 ~20 个回调如果都是渲染期内联新建，子组件
+   * 的 React.memo 会全部失效，每个 tick 都白 reconcile 一遍面板子树。
+   * 这里把回调全部固定成 useCallback，配合子组件 memo，隐藏的面板在播放期间
+   * 一次都不会重渲染。
+   */
+
+  const handleViewReady = useCallback(() => setViewReady(true), []);
+  const handleBack = useCallback(() => router.back(), [router]);
+  const handleTogglePlay = useCallback(() => {
+    bumpControls();
+    void adapter.toggle();
+  }, [adapter, bumpControls]);
+  const handleSeek = useCallback(
+    (deltaSeconds: number) => {
+      bumpControls();
+      skipTracker.seek();
+      // 位置一律从 ref 读最新值，避免回调依赖 playerState 而每 tick 重建
+      void adapter.seekTo(Math.max(0, lastStateRef.current.positionMs + deltaSeconds * 1000));
+    },
+    [adapter, bumpControls, skipTracker],
+  );
+  const handleSeekTo = useCallback(
+    (seconds: number) => {
+      bumpControls();
+      skipTracker.seek();
+      void adapter.seekTo(seconds * 1000);
+    },
+    [adapter, bumpControls, skipTracker],
+  );
+  const openEpisodesPanel = useCallback(() => setPanel('episodes'), []);
+  const openDanmakuPanel = useCallback(() => setPanel('danmaku'), []);
+  const openSettingsPanel = useCallback(() => setPanel('settings'), []);
+  const closePanel = useCallback(() => setPanel(null), []);
+  const closePanelDismiss = useCallback(() => setSkipPrompt(null), []);
+  const handleNextEpisode = useCallback(() => {
+    if (episodes.length <= 1) return;
+    goToEpisode(Math.min(currentIndex + 1, episodes.length - 1));
+  }, [currentIndex, episodes.length, goToEpisode]);
+  const handleRateChange = useCallback(
+    (r: number) => {
+      setRate(r);
+      void kv.setString(StorageKeys.PLAYER_RATE, String(r));
+      void adapter.setRate(r);
+    },
+    [adapter],
+  );
+  const handleToggleDanmaku = useCallback(() => {
+    setDanmakuEnabled((prev) => {
+      const next = !prev;
+      void kv.setString(StorageKeys.DANMAKU_DISPLAY_ENABLED, String(next));
+      return next;
+    });
+  }, []);
+  const handleSelectEpisode = useCallback(
+    (index: number) => {
+      goToEpisode(index);
+      setPanel(null);
+    },
+    [goToEpisode],
+  );
+  const handlePickDanmakuEpisode = useCallback(
+    (info: { episodeId: number; animeTitle: string; episodeTitle: string }) => {
+      void applyManualDanmaku(info);
+    },
+    [applyManualDanmaku],
+  );
+  const handleAdblockChange = useCallback((v: boolean) => {
+    setAdblock(v);
+    void kv.setString(StorageKeys.ADBLOCK_ENABLED, String(v));
+  }, []);
+  const handleProxySegmentsChange = useCallback((v: boolean) => {
+    setProxySegments(v);
+    void kv.setString(StorageKeys.PROXY_SEGMENTS, String(v));
+  }, []);
+  const handleSkipConfigChange = useCallback(
+    (patch: Partial<typeof skipConfig>) => {
+      setSkipConfig((prev) => {
+        const next = { ...prev, ...patch };
+        if (loggedIn && id && source) {
+          void saveSkipConfig(skipKey(source, id), next).catch(() => {});
+        }
+        return next;
+      });
+    },
+    [loggedIn, id, source],
+  );
+  const handleAutoNextChange = useCallback((v: boolean) => {
+    setAutoNext(v);
+    void kv.setString(StorageKeys.PLAYER_AUTO_NEXT, String(v));
+  }, []);
+
   /* ---------------- 主渲染 ---------------- */
 
   const loading = detailQuery.isLoading || (!!playUrl && playerState.status === 'loading');
@@ -682,7 +795,7 @@ export default function PlayScreen() {
         <ExpoAvVideoView
           adapterRef={adapterRef}
           style={StyleSheet.absoluteFill}
-          onReady={() => setViewReady(true)}
+          onReady={handleViewReady}
         />
 
         <DanmakuOverlay
@@ -713,47 +826,18 @@ export default function PlayScreen() {
         state={playerState}
         title={title}
         episodeLabel={episodeLabel}
-        onBack={() => router.back()}
-        onTogglePlay={() => {
-          bumpControls();
-          void adapter.toggle();
-        }}
-        onSeek={(deltaSeconds) => {
-          bumpControls();
-          skipTracker.seek();
-          void adapter.seekTo(Math.max(0, playerState.positionMs + deltaSeconds * 1000));
-        }}
-        onSeekTo={(seconds) => {
-          bumpControls();
-          skipTracker.seek();
-          void adapter.seekTo(seconds * 1000);
-        }}
-        onOpenEpisodes={() => {
-          setPanel('episodes');
-        }}
-        onOpenDanmaku={() => {
-          setPanel('danmaku');
-        }}
-        onOpenSettings={() => {
-          setPanel('settings');
-        }}
-        onNextEpisode={
-          episodes.length > 1
-            ? () => goToEpisode(Math.min(currentIndex + 1, episodes.length - 1))
-            : undefined
-        }
+        onBack={handleBack}
+        onTogglePlay={handleTogglePlay}
+        onSeek={handleSeek}
+        onSeekTo={handleSeekTo}
+        onOpenEpisodes={openEpisodesPanel}
+        onOpenDanmaku={openDanmakuPanel}
+        onOpenSettings={openSettingsPanel}
+        onNextEpisode={episodes.length > 1 ? handleNextEpisode : undefined}
         rate={rate}
-        onRateChange={(r) => {
-          setRate(r);
-          void kv.setString(StorageKeys.PLAYER_RATE, String(r));
-          void adapter.setRate(r);
-        }}
+        onRateChange={handleRateChange}
         danmakuEnabled={danmakuEnabled}
-        onToggleDanmaku={() => {
-          const next = !danmakuEnabled;
-          setDanmakuEnabled(next);
-          void kv.setString(StorageKeys.DANMAKU_DISPLAY_ENABLED, String(next));
-        }}
+        onToggleDanmaku={handleToggleDanmaku}
       />
 
       {/* 片头尾跳过 / 连播提示 */}
@@ -766,32 +850,27 @@ export default function PlayScreen() {
             setSkipPrompt(null);
             if (next !== null) goToEpisode(next);
           }}
-          onDismiss={() => setSkipPrompt(null)}
+          onDismiss={closePanelDismiss}
         />
       ) : null}
 
       {/* 面板 */}
       <EpisodesPanel
         visible={panel === 'episodes'}
-        onClose={() => setPanel(null)}
+        onClose={closePanel}
         episodes={episodes}
         currentIndex={currentIndex}
-        onSelect={(index) => {
-          goToEpisode(index);
-          setPanel(null);
-        }}
+        onSelect={handleSelectEpisode}
         watchedUpTo={recordQuery.data ? Number(recordQuery.data.index) - 1 : undefined}
       />
 
       <DanmakuPanel
         visible={panel === 'danmaku'}
-        onClose={() => setPanel(null)}
+        onClose={closePanel}
         settings={danmakuSettings}
         onSettingsChange={updateDanmakuSettings}
         status={danmakuStatus}
-        onPickEpisode={(info) => {
-          void applyManualDanmaku(info);
-        }}
+        onPickEpisode={handlePickDanmakuEpisode}
         onRetryAuto={() => {
           danmakuManualRef.current = false;
           setDanmakuItems([]);
@@ -828,38 +907,17 @@ export default function PlayScreen() {
 
       <PlaySettingsPanel
         visible={panel === 'settings'}
-        onClose={() => setPanel(null)}
+        onClose={closePanel}
         rate={rate}
-        onRateChange={(r) => {
-          setRate(r);
-          void kv.setString(StorageKeys.PLAYER_RATE, String(r));
-          void adapter.setRate(r);
-        }}
+        onRateChange={handleRateChange}
         adblock={adblock}
-        onAdblockChange={(v) => {
-          setAdblock(v);
-          void kv.setString(StorageKeys.ADBLOCK_ENABLED, String(v));
-        }}
+        onAdblockChange={handleAdblockChange}
         proxySegments={proxySegments}
-        onProxySegmentsChange={(v) => {
-          setProxySegments(v);
-          void kv.setString(StorageKeys.PROXY_SEGMENTS, String(v));
-        }}
+        onProxySegmentsChange={handleProxySegmentsChange}
         skipConfig={skipConfig}
-        onSkipConfigChange={(patch) => {
-          setSkipConfig((prev) => {
-            const next = { ...prev, ...patch };
-            if (loggedIn && id && source) {
-              void saveSkipConfig(skipKey(source, id), next).catch(() => {});
-            }
-            return next;
-          });
-        }}
+        onSkipConfigChange={handleSkipConfigChange}
         autoNext={autoNext}
-        onAutoNextChange={(v) => {
-          setAutoNext(v);
-          void kv.setString(StorageKeys.PLAYER_AUTO_NEXT, String(v));
-        }}
+        onAutoNextChange={handleAutoNextChange}
         capabilities={capabilities}
       />
     </View>

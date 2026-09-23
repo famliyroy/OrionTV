@@ -72,7 +72,7 @@ export interface PlayerControlsProps {
   onToggleDanmaku: () => void;
 }
 
-export function PlayerControls({
+export const PlayerControls = React.memo(function PlayerControls({
   visible,
   state,
   title,
@@ -245,7 +245,7 @@ export function PlayerControls({
       </View>
     </View>
   );
-}
+});
 
 /* ------------------------------------------------------------------ *
  * 内部控件

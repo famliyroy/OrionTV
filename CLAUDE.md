@@ -15,7 +15,7 @@ OrionTV is a React Native TVOS application for streaming video content, built wi
 ## ⚠️ v2 重构（`rewrite/v2` 分支）——先读这一节
 
 **从 `rewrite/v2` 分支开始的全部工作，请忽略上面第 9 行描述的那套 v1 目录。**
-v2 是照着后端契约重建的分层实现，版本号 **v2.0.2**，与 v1 **不共享任何模块**。
+v2 是照着后端契约重建的分层实现，版本号 **v2.0.3**，与 v1 **不共享任何模块**。
 
 完整架构说明、实测契约结论、已知偏差见 **[`docs/REWRITE_V2.md`](docs/REWRITE_V2.md)**。
 速览：
@@ -113,6 +113,10 @@ v2 是照着后端契约重建的分层实现，版本号 **v2.0.2**，与 v1 **
     留在常规流里且按内容自适应（0×0），内层 View 的 absolute 是相对这个 0 高父容器算的，
     结果是"看不见的按钮"。凡是绝对定位的 Focusable（如 `VideoCard` 右上角删除），
     必须外包一个普通 `View` 负责定位与尺寸，Focusable 用定值填满它。
+18. **`[]` effect 的 cleanup 闭包拿到的是首渲染的旧值**（卸载 flush 经典坑，v2.0.3 修）：
+    "只在卸载时执行一次"的 effect 如果直接引用 state（如当前集号），cleanup 用的是
+    **首渲染**的值（此时异步数据往往还没回来）。正确姿势：渲染期把最新上下文同步进 ref，
+    cleanup 一律读 ref（见 `app/play.tsx` 的 `flushCtxRef`）。
 
 ---
 

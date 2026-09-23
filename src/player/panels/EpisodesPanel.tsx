@@ -24,7 +24,7 @@ export interface EpisodesPanelProps {
   watchedUpTo?: number;
 }
 
-export function EpisodesPanel({
+export const EpisodesPanel = React.memo(function EpisodesPanel({
   visible,
   onClose,
   episodes,
@@ -96,7 +96,7 @@ export function EpisodesPanel({
       />
     </SidePanel>
   );
-}
+});
 
 /** getItemLayout 用的行高：行内容高度 + 行间距，两处必须一致 */
 function rowHeight(scaled: (n: number) => number): number {

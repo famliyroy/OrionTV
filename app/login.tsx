@@ -225,7 +225,12 @@ function QrLogin({ onSuccess }: { onSuccess: () => void }) {
         if (final.status === 'confirmed') successRef.current();
         else if (final.status === 'expired') setError('二维码已过期，请刷新');
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        /**
+         * v2.0.3：abort（刷新二维码 / 卸载） reject 也会落进这里，不能当成查询失败 ——
+         * 否则新二维码已经刷出来了，下面却还挂着一句"登录状态查询失败"。
+         */
+        if (ctrl.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
         setError('登录状态查询失败');
       });
 

@@ -9,6 +9,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { apiClient } from '@api/client';
 import { login as apiLogin, logout as apiLogout, register as apiRegister } from '@api/repos/auth';
+import { clearSiteScopedCaches } from '@api/repos/maintenance';
 import { resetAllQueries } from './query';
 import { useCapabilityStore } from './capabilities';
 
@@ -61,10 +62,13 @@ export function useAuth(): AuthSnapshot & {
 } {
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
+  // 换账号（登录/注册/登出）时清站点级快照 —— 否则新账号会在缓存里看到
+  // 旧账号的收藏 / 播放记录 / 首页内容（v2.0.3 代码审查发现的串台路径）
   const login = useCallback(async (username: string | undefined, password: string) => {
     const res = await apiLogin({ username, password });
     if (!res.ok) throw new Error(res.message || '登录失败');
     resetAllQueries();
+    await clearSiteScopedCaches();
     refreshSnapshot();
     await useCapabilityStore.getState().load(true);
   }, []);
@@ -73,6 +77,7 @@ export function useAuth(): AuthSnapshot & {
     const res = await apiRegister({ username, password, inviteCode });
     if (!res.ok) throw new Error(res.message || '注册失败');
     resetAllQueries();
+    await clearSiteScopedCaches();
     refreshSnapshot();
     await useCapabilityStore.getState().load(true);
   }, []);
@@ -80,6 +85,7 @@ export function useAuth(): AuthSnapshot & {
   const logout = useCallback(async () => {
     await apiLogout();
     resetAllQueries();
+    await clearSiteScopedCaches();
     useCapabilityStore.getState().clearDenied();
     refreshSnapshot();
   }, []);

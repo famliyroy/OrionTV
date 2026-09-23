@@ -47,9 +47,15 @@ export default function SettingsScreen() {
   const [server, setServer] = useState(() => peekServerConfig());
 
   useEffect(() => {
+    let alive = true;
     void getServerConfig(true)
-      .then(setServer)
+      .then((cfg) => {
+        if (alive) setServer(cfg);
+      })
       .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const saveBaseUrl = useCallback(async () => {
@@ -87,7 +93,13 @@ export default function SettingsScreen() {
   const [layout, setLayout] = useState<HomeLayoutSettings | null>(null);
 
   useEffect(() => {
-    void loadHomeLayout().then(setLayout);
+    let alive = true;
+    void loadHomeLayout().then((l) => {
+      if (alive) setLayout(l);
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const patchLayout = useCallback((patch: Partial<HomeLayoutSettings>) => {
@@ -408,7 +420,11 @@ export default function SettingsScreen() {
 
 /* ------------------------------------------------------------------ */
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * memo（v2.0.3）：服务器地址输入框每个按键都会让整页（六个 Section + 模块排序
+ * 列表）重渲染，Section/SwitchRow 包 memo 后未变化的区块直接跳过。
+ */
+const Section = React.memo(function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const { scaled } = useShell();
   return (
     <View style={styles.section}>
@@ -416,7 +432,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <View style={{ gap: spacing.sm }}>{children}</View>
     </View>
   );
-}
+});
 
 function SwitchRow({
   label,

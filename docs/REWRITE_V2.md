@@ -1,6 +1,6 @@
 # OrionTV 原生客户端 v2 重构说明
 
-> 分支：`rewrite/v2`　当前版本：**v2.0.2**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
+> 分支：`rewrite/v2`　当前版本：**v2.0.3**　后端：自部署 MoonTVPlus `https://tv.668664.xyz`（`225.1.0` / kvrocks）
 >
 > `custom` 分支保持 v1.6.0 可发布状态不动，本分支是**重建**而非增量修改。
 
@@ -458,6 +458,36 @@ python work/fix_tags.py      # 不一致时：删 tag → 按真实构建提交�
 ```
 
 新版本号（≥ 2.0.1）不会与上游撞车，workflow 已钉死 `target_commitish: ${{ github.sha }}`。
+
+---
+
+### 9.4 v2.0.3 代码审查修复纪要
+
+三层并行审查（页面 / 数据层 / 播放与弹幕）后按优先级修复，分两类：
+
+**正确性（8 项）**
+1. 播放页卸载 flush 用首渲染的旧集号写播放记录（`[]` effect 闭包陷阱）→ 读 ref。
+2. 搜索 fallback 无取消保护：换词后旧请求回来污染新结果 → `cancelled` 标记。
+3. `setBaseUrl` 只清内存凭据：重启后拿旧站 cookie 请求新站 → 落盘 + 原生 Cookie 库一起清。
+4. `refreshSession` 不带 Cookie（依赖原生 jar 的隐式行为）→ 显式带；续期成功无新凭据时补时间戳；
+   `isAccessExpired()` 从死代码接上请求路径，token 过期不再每个请求白撞 401。
+5. 换站 / 换账号不清落盘快照与模块级缓存（`maintenance.ts` 统一收口）→ 收藏/记录/首页串台修复。
+6. `invalidationGroup('playRecords')` 前缀失效连带首页全部内容行 → 移除（首页已无继续观看）。
+7. 弹幕「合并重复」是死开关（配置存了没人读）→ setConfig 同步到 FilterSystem。
+8. 登录二维码刷新时 abort 落入错误分支 → 假"查询失败"提示修复。
+
+**性能（8 项）**
+1. 播放页进度 tick（250ms × 14400 次/小时）全树重渲染：~20 个回调 useCallback 化 +
+   PlayerControls / 三面板 / SkipOverlay / ExpoAvVideoView 包 React.memo。
+2. 弹幕每个 tick 全量 setState：在屏集合按 index 成员比较，未变跳过；关弹幕期间不提交。
+3. 弹幕描边 5 个原生 Text → 单 Text + textShadow（极端密度 2000 → 400 个原生视图）。
+4. SSE 每个源到达全量发布 → 120ms 合帧，完成时强制 flush。
+5. SSE buffer 每回调从头扫（大事件 O(n²)）→ 记录扫描位置增量扫。
+6. 进度上报每 15s 全量 JSON 序列化整个记录表 → 内存驻留 + 5s 防抖落盘。
+7. 搜索 keyExtractor 带数组下标 → 聚合层按 source+id 去重，key 稳定。
+8. 列表虚拟化参数补齐（search / me / detail）、轮播 renderItem 稳定化、
+   AhoCorasick `queue.shift` O(n²) → 头指针、去广告版本探测 5min TTL、
+   `/api/client-config` 404 负缓存、settings Section memo 等。
 
 ---
 

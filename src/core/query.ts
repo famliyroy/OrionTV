@@ -70,7 +70,12 @@ export const qk = {
  * 对应 Web 端 `subscribeToDataUpdates` 的事件语义（如 `playRecordsUpdated`）。
  */
 export const invalidationGroups = {
-  playRecords: [qk.playRecords(), qk.home()],
+  /**
+   * v2.0.3：不再连带 `qk.home()`。react-query 的 invalidateQueries 是**前缀匹配**，
+   * `['home']` 会命中首页全部内容行 —— 播放记录每次增删都让首页 6 行全量重拉。
+   * 且首页 v2.0.2 起已不展示继续观看，没有失效首页的必要。
+   */
+  playRecords: [qk.playRecords()],
   favorites: [qk.favorites(), qk.home()],
   searchHistory: [qk.searchHistory()],
   skipConfigs: [qk.skipConfigs()],

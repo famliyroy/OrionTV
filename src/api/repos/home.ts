@@ -116,11 +116,58 @@ export async function getUpcoming(signal?: AbortSignal): Promise<TMDBItem[]> {
 
 /* ---------------- 播放记录 ---------------- */
 
+/**
+ * 播放记录快照的内存副本（v2.0.3 代码审查优化）。
+ *
+ * 播放期间 `savePlayRecord` 约每 15s 触发一次，原来每次都「全量 JSON.parse
+ * 整个 map → 改一个键 → 全量 JSON.stringify 写盘」。改为内存驻留 +
+ * 5s 防抖落盘：读取路径不变（懒加载一次），写入路径从 O(n) 序列化降到
+ * O(1) 内存修改。删除/清空是用户动作，立即落盘，避免"刚删完杀进程又复活"。
+ */
+let recordsSnap: Record<string, PlayRecord> | null = null;
+let snapFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function readSnap(): Promise<Record<string, PlayRecord>> {
+  if (!recordsSnap) {
+    recordsSnap = (await kv.getObject<Record<string, PlayRecord>>(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT)) ?? {};
+  }
+  return recordsSnap;
+}
+
+function scheduleSnapFlush(): void {
+  if (snapFlushTimer) clearTimeout(snapFlushTimer);
+  snapFlushTimer = setTimeout(() => {
+    snapFlushTimer = null;
+    void kv.setObject(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT, recordsSnap);
+  }, 5000);
+}
+
+/** 退出播放页等时机可显式调用，把防抖中的快照立刻落盘 */
+export async function flushPlayRecordsSnapshot(): Promise<void> {
+  if (snapFlushTimer) {
+    clearTimeout(snapFlushTimer);
+    snapFlushTimer = null;
+  }
+  if (recordsSnap) {
+    await kv.setObject(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT, recordsSnap);
+  }
+}
+
+/** 换站/换账号时调用（见 maintenance.ts）：作废内存副本 */
+export function clearHomeCaches(): void {
+  if (snapFlushTimer) {
+    clearTimeout(snapFlushTimer);
+    snapFlushTimer = null;
+  }
+  recordsSnap = null;
+}
+
 /** GET /api/playrecords → 顶层即 map（不是 {records:...}） */
 export async function getAllPlayRecords(): Promise<Record<string, PlayRecord>> {
   const res = await apiClient.request<Record<string, PlayRecord>>('/api/playrecords');
   const map = res && typeof res === 'object' && !Array.isArray(res) ? res : {};
-  await kv.setObject(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT, map);
+  recordsSnap = map;
+  scheduleSnapFlush();
   return map;
 }
 
@@ -129,25 +176,26 @@ export async function savePlayRecord(key: string, record: PlayRecord): Promise<v
     method: 'POST',
     body: { key, record },
   });
-  const snap = (await kv.getObject<Record<string, PlayRecord>>(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT)) ?? {};
+  const snap = await readSnap();
   snap[key] = record;
-  await kv.setObject(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT, snap);
+  scheduleSnapFlush();
 }
 
 export async function deletePlayRecord(key: string): Promise<void> {
   await apiClient.request('/api/playrecords', { method: 'DELETE', query: { key } });
-  const snap = (await kv.getObject<Record<string, PlayRecord>>(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT)) ?? {};
+  const snap = await readSnap();
   delete snap[key];
-  await kv.setObject(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT, snap);
+  await flushPlayRecordsSnapshot();
 }
 
 export async function clearAllPlayRecords(): Promise<void> {
   await apiClient.request('/api/playrecords', { method: 'DELETE' });
+  recordsSnap = {};
   await kv.remove(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT);
 }
 
 export async function getCachedPlayRecords(): Promise<Record<string, PlayRecord>> {
-  return (await kv.getObject<Record<string, PlayRecord>>(StorageKeys.CACHE_PLAY_RECORDS_SNAPSHOT)) ?? {};
+  return { ...(await readSnap()) };
 }
 
 /**

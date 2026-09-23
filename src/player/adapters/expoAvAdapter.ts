@@ -17,7 +17,7 @@
  *     渲染结果与 JSX 完全等价，且 props 仍受 `VideoProps` 约束。
  */
 
-import { createElement, useCallback, useRef, type RefObject } from 'react';
+import React, { createElement, useCallback, useRef, type RefObject } from 'react';
 import { StyleProp, ViewStyle } from 'react-native';
 import { AVPlaybackStatus, ResizeMode, Video } from 'expo-av';
 import type { PlayerCore, PlayerState, PlayerStatus } from '@player/core/types';
@@ -278,7 +278,12 @@ export interface ExpoAvVideoViewProps {
  * 只做三件事：持有 ref、把 ref 交给适配器、把状态回调转给适配器。
  * 所有交互（播放/暂停/进度）都走适配器，视图本身不持有播放状态。
  */
-export function ExpoAvVideoView({
+/**
+ * memo（v2.0.3）：播放页每 250ms 重渲染一次，视图组件 props 稳定
+ * （adapterRef / style 常量 / onReady 已 useCallback 化），包 memo 后
+ * 进度 tick 不再波及原生 <Video> 的 reconcile。
+ */
+export const ExpoAvVideoView = React.memo(function ExpoAvVideoView({
   adapterRef,
   style,
   resizeMode = ResizeMode.CONTAIN,
@@ -309,4 +314,4 @@ export function ExpoAvVideoView({
     onPlaybackStatusUpdate: handleStatusUpdate,
     onLayout: handleLayout,
   });
-}
+});

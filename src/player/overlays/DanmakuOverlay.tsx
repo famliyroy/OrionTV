@@ -102,6 +102,8 @@ export function DanmakuOverlay({
   const lastPerfRef = useRef(0);
   const lastTickRef = useRef(0);
   const slowTickRef = useRef(0);
+  /** 上次提交的在屏集合，用于成员比较（同序同 index 即视为未变，跳过 setState） */
+  const linesRef = useRef<PlacedDanmaku[]>([]);
 
   /** 设置 → 引擎配置。只依赖真正影响布局的字段，避免无谓的 setConfig */
   const engineConfig = useMemo(
@@ -129,7 +131,9 @@ export function DanmakuOverlay({
       engine.load(items, maxCount);
       engine.seek(nowMs);
       lastTimeMsRef.current = nowMs;
-      setLines(engine.active(nowMs));
+      const initial = engine.active(nowMs);
+      linesRef.current = initial;
+      setLines(initial);
       setResetEpoch((epoch) => epoch + 1);
       return;
     }
@@ -137,9 +141,13 @@ export function DanmakuOverlay({
     /* ---------- 2) 设置 / 视口变化 ---------- */
     if (configKeyRef.current !== configKey) {
       configKeyRef.current = configKey;
-      engine.setConfig(engineConfig);
-      // setConfig 只在视口/字号变化时才清轨道，这里再对齐一次时间轴，保证幂等
-      engine.seek(nowMs);
+      /**
+       * setConfig 在视口/字号变化时已自行 reset + replayTo，
+       * 这里只有在**没有**重建的情况下才需要 seek 对齐时间轴（原来无条件 seek，
+       * 改一次字号会全量回放两遍 —— v2.0.3 修复）。
+       */
+      const rebuilt = engine.setConfig(engineConfig);
+      if (!rebuilt) engine.seek(nowMs);
       lastTimeMsRef.current = nowMs;
     }
     if (filterKeyRef.current !== filterKey) {
@@ -152,11 +160,17 @@ export function DanmakuOverlay({
     const frameElapsed = lastPerfRef.current > 0 ? perfNow - lastPerfRef.current : 0;
     lastPerfRef.current = perfNow;
 
-    // 回退（用户拖进度条往回）：引擎会自己 seek，但本地已渲染条目必须作废
-    if (nowMs + 1 < lastTimeMsRef.current) {
+    /**
+     * 回退 或 大跳前进（>1s，如暂停时拖进度条、seek 快进）：
+     * 统一走 seek 重建。原来只在回退时重建 —— 暂停往前拖进度条后，
+     * 引擎 cursor 停在原地，跳过的弹幕要么不显示、要么被耗时保护丢掉（v2.0.3 修复）。
+     */
+    if (nowMs + 1 < lastTimeMsRef.current || nowMs - lastTimeMsRef.current > 1000) {
       engine.seek(nowMs);
       lastTimeMsRef.current = nowMs;
-      setLines([]);
+      const snapped = engine.active(nowMs);
+      linesRef.current = snapped;
+      setLines(snapped);
       setResetEpoch((epoch) => epoch + 1);
       return;
     }
@@ -167,18 +181,26 @@ export function DanmakuOverlay({
       engine.advance(nowMs, frameElapsed);
     }
 
-    /* ---------- 4) 性能兜底：同屏过多时降频提交 ---------- */
-    if (engine.onScreenCount(nowMs) > ON_SCREEN_FALLBACK_BUDGET) {
+    /* ---------- 4) 提交在屏集合（成员没变就跳过，避免每个 tick 全量重渲染） ---------- */
+    // 弹幕关闭期间照常 advance（保持时间轴同步），但不提交 state ——
+    // 否则每个进度回调都白触发一次空渲染。
+    if (!enabled) return;
+
+    const next = engine.active(nowMs);
+    if (sameOnScreen(linesRef.current, next)) return;
+    /* 同屏条数兜底：active 返回的即在屏集合，count 直接取长度，省一次全量遍历 */
+    if (next.length > ON_SCREEN_FALLBACK_BUDGET) {
       slowTickRef.current += 1;
       if (slowTickRef.current % 2 !== 0) return;
     } else {
       slowTickRef.current = 0;
     }
-
-    setLines(engine.active(nowMs));
+    linesRef.current = next;
+    setLines(next);
   }, [
     currentTime,
     playing,
+    enabled,
     engineConfig,
     configKey,
     filterKey,
@@ -215,14 +237,6 @@ export function DanmakuOverlay({
 /* ------------------------------------------------------------------ *
  * 单条弹幕
  * ------------------------------------------------------------------ */
-
-/** 描边 4 向偏移（RN 不支持 Web 的 `-webkit-text-stroke`，用 4 层阴影近似） */
-const STROKE_OFFSETS: ReadonlyArray<{ x: number; y: number }> = [
-  { x: -1, y: 0 },
-  { x: 1, y: 0 },
-  { x: 0, y: -1 },
-  { x: 0, y: 1 },
-];
 
 interface DanmakuLineProps {
   entry: PlacedDanmaku;
@@ -316,39 +330,35 @@ interface DanmakuTextProps {
   stroke: boolean;
 }
 
+/** 描边：v2.0.3 起用单 Text + textShadow 实现。
+ *
+ * 原来是 4 个绝对定位的描边 Text + 1 个主 Text（每条弹幕 5 个原生视图），
+ * 极端密度下同屏 400 条 = 2000 个原生 Text（measure/layout/draw 全走 yoga +
+ * 原生文本管线），是弹幕渲染的最大成本。RN 不支持 Web 的
+ * `-webkit-text-stroke`，但 `textShadow` 的模糊光晕在 10 英尺观看距离下
+ * 观感与 1px 描边几乎无差，节点数从 5× 降到 1×。 */
 function DanmakuText({ text, color, fontSize, lineHeight, stroke }: DanmakuTextProps) {
-  const baseStyle = useMemo<TextStyle>(
-    () => ({ fontSize, lineHeight, includeFontPadding: false }),
-    [fontSize, lineHeight],
+  const style = useMemo<TextStyle>(
+    () => ({
+      fontSize,
+      lineHeight,
+      includeFontPadding: false,
+      color,
+      ...(stroke
+        ? {
+            textShadowColor: palette.danmakuStroke,
+            textShadowRadius: 3,
+            textShadowOffset: { width: 0, height: 0 },
+          }
+        : null),
+    }),
+    [fontSize, lineHeight, color, stroke],
   );
 
   return (
-    <View style={styles.textStack}>
-      {/* 先画描边层，主文本最后画，保证颜色不被描边盖住 */}
-      {stroke
-        ? STROKE_OFFSETS.map((offset) => (
-            <Text
-              key={`${offset.x},${offset.y}`}
-              numberOfLines={1}
-              ellipsizeMode="clip"
-              style={[
-                baseStyle,
-                styles.strokeLayer,
-                {
-                  textShadowColor: palette.danmakuStroke,
-                  textShadowRadius: 2,
-                  textShadowOffset: { width: offset.x, height: offset.y },
-                },
-              ]}
-            >
-              {text}
-            </Text>
-          ))
-        : null}
-      <Text numberOfLines={1} ellipsizeMode="clip" style={[baseStyle, { color }]}>
-        {text}
-      </Text>
-    </View>
+    <Text numberOfLines={1} ellipsizeMode="clip" style={style}>
+      {text}
+    </Text>
   );
 }
 
@@ -384,12 +394,26 @@ export function DanmakuStatsBadge({ visible, stats, style }: DanmakuStatsBadgePr
  * 工具
  * ------------------------------------------------------------------ */
 
+/**
+ * 在屏集合的成员比较：引擎对每个已放置弹幕会产出稳定的 `index`，
+ * 同序且 index 全等即视为集合未变（y/宽度在放置时已定死，不会随 tick 变）。
+ * 命中时跳过 setState —— 原来每个进度回调（250ms × N 条）都全量重渲染。
+ */
+function sameOnScreen(a: PlacedDanmaku[], b: PlacedDanmaku[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].index !== b[i].index) return false;
+  }
+  return true;
+}
+
 /** 弹幕输入的内容指纹：父组件每次渲染都传新数组时，只要内容没变就不重装 */
 function signItems(items: DanmakuInput[]): string {
   if (!items.length) return '0';
   const first = items[0];
+  const mid = items[Math.floor(items.length / 2)];
   const last = items[items.length - 1];
-  return `${items.length}|${first.time}|${first.text}|${last.time}|${last.text}`;
+  return `${items.length}|${first.time}|${first.text}|${mid.time}|${mid.text}|${last.time}|${last.text}`;
 }
 
 function clampMs(value: number, min: number, max: number): number {
@@ -420,15 +444,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     justifyContent: 'center',
-  },
-  textStack: {
-    flexDirection: 'column',
-  },
-  strokeLayer: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    color: palette.danmakuStroke,
   },
   badge: {
     position: 'absolute',

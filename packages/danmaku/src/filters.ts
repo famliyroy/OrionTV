@@ -62,8 +62,11 @@ class AhoCorasick {
       this.nodes[child].fail = 0;
       queue.push(child);
     }
-    while (queue.length) {
-      const node = queue.shift() as number;
+    // 头指针出队，替代 `queue.shift()`（后者每次 O(n) 搬移，屏蔽词多时构建退化为 O(n²)）
+    let head = 0;
+    while (head < queue.length) {
+      const node = queue[head];
+      head += 1;
       for (const [cp, child] of this.nodes[node].children) {
         let fail = this.nodes[node].fail;
         while (fail !== 0 && !this.nodes[fail].children.has(cp)) {

@@ -20,6 +20,18 @@ import type {
 /** 站点配置：内存缓存 + 磁盘缓存（冷启动先渲染再用新值覆盖） */
 let serverConfigCache: ServerConfig | null = null;
 let runtimeConfigCache: RuntimeConfig | null = null;
+/**
+ * `/api/client-config` 探测失败的负缓存（v2.0.3）：
+ * 上游目前没有这个接口，没有负缓存的话，登录/登出/401 续期后每次 `load(true)`
+ * 都会白打一发注定 404 的探测（紧接着还要抓一次整页 HTML）。
+ */
+let clientConfigUnavailable = false;
+
+export function clearConfigCaches(): void {
+  serverConfigCache = null;
+  runtimeConfigCache = null;
+  clientConfigUnavailable = false;
+}
 
 export async function getServerConfig(force = false): Promise<ServerConfig> {
   if (!force && serverConfigCache) return serverConfigCache;
@@ -40,20 +52,23 @@ export function peekServerConfig(): ServerConfig | null {
 export async function getRuntimeConfig(force = false): Promise<RuntimeConfig | null> {
   if (!force && runtimeConfigCache) return runtimeConfigCache;
 
-  // 路径 3：上游若补了专用接口，直接用它（最稳）
-  try {
-    const probe = await apiClient.request<RuntimeConfig>('/api/client-config', {
-      auth: true,
-      retries: 0,
-      timeoutMs: 8000,
-    });
-    if (probe && typeof probe === 'object' && (probe as RuntimeConfig).STORAGE_TYPE) {
-      runtimeConfigCache = probe;
-      await writeCache(StorageKeys.CACHE_RUNTIME_CONFIG, probe);
-      return probe;
+  // 路径 3：上游若补了专用接口，直接用它（最稳）；探测失败过一次就记住，不再重试
+  if (!clientConfigUnavailable) {
+    try {
+      const probe = await apiClient.request<RuntimeConfig>('/api/client-config', {
+        auth: true,
+        retries: 0,
+        timeoutMs: 8000,
+      });
+      if (probe && typeof probe === 'object' && (probe as RuntimeConfig).STORAGE_TYPE) {
+        runtimeConfigCache = probe;
+        await writeCache(StorageKeys.CACHE_RUNTIME_CONFIG, probe);
+        return probe;
+      }
+      clientConfigUnavailable = true; // 返回了 200 但形态不对，别再探测
+    } catch {
+      clientConfigUnavailable = true; // 预期内：上游暂无该接口
     }
-  } catch {
-    /* 预期内：上游暂无该接口 */
   }
 
   // 路径 1/2：抓首页 HTML 抽内联脚本

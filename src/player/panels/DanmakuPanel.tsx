@@ -45,7 +45,7 @@ export interface DanmakuPanelProps {
 
 type Tab = 'settings' | 'match';
 
-export function DanmakuPanel({
+export const DanmakuPanel = React.memo(function DanmakuPanel({
   visible,
   onClose,
   settings,
@@ -72,7 +72,7 @@ export function DanmakuPanel({
       )}
     </SidePanel>
   );
-}
+});
 
 /* ------------------------------------------------------------------ *
  * 匹配状态
