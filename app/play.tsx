@@ -23,6 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -34,6 +35,7 @@ import { useQuery } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as NavigationBar from 'expo-navigation-bar';
 
 import { getSourceDetail, toEpisodes, type Episode } from '@api/repos/detail';
 import { getSkipConfig, saveSkipConfig, skipKey, getDanmakuFilter } from '@api/repos/config';
@@ -437,6 +439,7 @@ export default function PlayScreen() {
     }, CONTROLS_HIDE_MS);
   }, []);
 
+  // 页面初次装载时展示 4 秒后自动隐藏
   useEffect(() => {
     bumpControls();
     return () => {
@@ -444,12 +447,22 @@ export default function PlayScreen() {
     };
   }, [bumpControls]);
 
-  /** 暂停时不要把控制条收掉：用户正要看时间 */
+  /**
+   * 控制条状态机：
+   * - 暂停时（paused）：保持控制条常驻显示，用户正要看时间或画面
+   * - 只有从暂停恢复播放（paused -> playing）时：触发一次 bumpControls 自动隐藏倒计时
+   * - 播放过程中切片加载或 buffering 波动绝对不唤出控制条，彻底避免自动隐藏后又闪烁弹出的 bug
+   */
+  const prevStatusRef = useRef<PlayerState['status']>(playerState.status);
+
   useEffect(() => {
-    if (playerState.status === 'paused' || playerState.status === 'loading' || playerState.status === 'buffering') {
+    const prevStatus = prevStatusRef.current;
+    prevStatusRef.current = playerState.status;
+
+    if (playerState.status === 'paused') {
       if (hideTimer.current) clearTimeout(hideTimer.current);
       setControlsVisible(true);
-    } else if (playerState.status === 'playing') {
+    } else if (prevStatus === 'paused' && playerState.status === 'playing') {
       bumpControls();
     }
   }, [bumpControls, playerState.status]);
@@ -647,6 +660,21 @@ export default function PlayScreen() {
       void ScreenOrientation.unlockAsync().catch(() => {});
     };
   }, [wasLandscapeOnEnter]);
+
+  /* ---------------- 沉浸式全屏（隐藏 Android 系统虚拟触控导航栏与状态栏） ---------------- */
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      void NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+      void NavigationBar.setBehaviorAsync('overlay-swipe').catch(() => {});
+    }
+    return () => {
+      if (Platform.OS === 'android') {
+        void NavigationBar.setVisibilityAsync('visible').catch(() => {});
+        void NavigationBar.setBehaviorAsync('inset-touch').catch(() => {});
+      }
+    };
+  }, []);
 
   /* ---------------- 直链模式（P0 兜底：手动贴 m3u8） ---------------- */
 

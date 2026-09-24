@@ -117,10 +117,12 @@ export function isTVDevice(): boolean {
   return typeof uiMode === 'string' && uiMode.toLowerCase().includes('tv');
 }
 
-/** 宽屏（横向 ≥ 1000dp）视为 tv/tablet 壳候选 */
+/** 宽屏（短边 ≥ 600dp 或长边 ≥ 960dp）视为 tv/tablet 壳候选（对齐 Android 官方 sw600dp 平板标准） */
 export function isWideScreen(): boolean {
   const { width, height } = Dimensions.get('window');
-  return Math.max(width, height) >= 1000;
+  const shortSide = Math.min(width, height);
+  const longSide = Math.max(width, height);
+  return shortSide >= 600 || longSide >= 960;
 }
 
 /**
@@ -160,21 +162,37 @@ export function computeMetrics(shell: ShellKind): LayoutMetrics {
   const scale =
     shell === 'tv' ? Math.min(1.6, Math.max(1, shortSide / 720)) : Math.min(1.15, Math.max(0.95, shortSide / 420));
 
-  const gutter = shell === 'phone' ? spacing.lg : spacing.xxl;
-  const availableWidth = width - gutter * 2;
+  /** 平板/TV 壳在 AppShell 左侧有常驻导航栏，必须从可用宽度中扣除 */
+  const railWidth = shell === 'tv' ? Math.round(88 * scale) : shell === 'tablet' ? 72 : 0;
+  const gutter = shell === 'phone' ? spacing.lg : spacing.xl;
+  const availableWidth = Math.max(280, width - railWidth - gutter * 2);
+  const gap = spacing.md;
 
   /**
-   * 先按目标卡片宽度算出列数，再按列数反算**实际卡片宽度**，让卡片填满整行。
-   *
-   * 原来先固定 cardWidth 再算 columns，结果右侧留下 100dp+ 的空白（手机上
-   * 两张窄卡片占不满 360dp+ 的可用宽度）。现在是：
-   *   targetWidth → columns → cardWidth = (可用宽度 - 所有间距) / columns
-   * 这样无论屏幕多宽，卡片总是占满一行，没有浪费。
+   * 响应式弹性列数计算：
+   * - TV（沙发 10-foot 远距）：卡片目标宽 180dp * scale
+   * - 平板（桌面/手持大屏）：卡片舒适黄金宽度 130~145dp，列数随分辨率平滑延伸（4~8 列）
+   * - 手机：竖屏固定 3 列（极窄屏 < 310dp 时 2 列），横屏自适应 4~6 列
+   * 算得列数后反算精确卡片宽度，使卡片完美填满整行、右侧不留白
    */
-  const targetCardWidth =
-    shell === 'tv' ? 180 * scale : shell === 'tablet' ? 140 : Math.max(110, Math.round(width / 3.2));
-  const gap = spacing.md;
-  const columns = Math.max(1, Math.floor((availableWidth + gap) / (targetCardWidth + gap)));
+  let columns: number;
+  if (shell === 'tv') {
+    const targetCardWidth = 180 * scale;
+    columns = Math.max(3, Math.round((availableWidth + gap) / (targetCardWidth + gap)));
+  } else if (shell === 'tablet') {
+    const idealCardWidth = 132;
+    columns = Math.max(3, Math.round((availableWidth + gap) / (idealCardWidth + gap)));
+  } else {
+    if (!isLandscape && availableWidth < 310) {
+      columns = 2;
+    } else if (!isLandscape) {
+      columns = 3;
+    } else {
+      const idealCardWidth = 120;
+      columns = Math.max(3, Math.round((availableWidth + gap) / (idealCardWidth + gap)));
+    }
+  }
+
   const cardWidth = Math.floor((availableWidth - gap * (columns - 1)) / columns);
 
   return { width, height, isLandscape, scale, columns, cardWidth, gutter };
