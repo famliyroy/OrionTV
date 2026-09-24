@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -372,7 +372,19 @@ function AccountTab({
   const [oldPassword, setOldPassword] = useState('');
 
   return (
-    <View style={[styles.account, { paddingHorizontal: metrics.gutter, gap: spacing.lg }]}>
+    <ScrollView
+      style={styles.accountScroll}
+      contentContainerStyle={[
+        styles.account,
+        {
+          paddingHorizontal: metrics.gutter,
+          gap: spacing.lg,
+          paddingBottom: spacing.xxxl * 2,
+        },
+      ]}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.card}>
         <Text style={[styles.cardTitle, { fontSize: scaled(fontSize.subtitle) }]}>设备</Text>
         {devicesLoading ? (
@@ -498,7 +510,7 @@ function AccountTab({
           </View>
         )}
       </Focusable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -590,6 +602,9 @@ const styles = StyleSheet.create({
   },
   clearTextFocused: {
     color: palette.focus,
+  },
+  accountScroll: {
+    flex: 1,
   },
   account: {
     paddingTop: spacing.md,

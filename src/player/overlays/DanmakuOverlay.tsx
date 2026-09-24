@@ -163,11 +163,18 @@ export function DanmakuOverlay({
     lastPerfRef.current = perfNow;
 
     /**
-     * 回退 或 大跳前进（>1s，如暂停时拖进度条、seek 快进）：
-     * 统一走 seek 重建。原来只在回退时重建 —— 暂停往前拖进度条后，
-     * 引擎 cursor 停在原地，跳过的弹幕要么不显示、要么被耗时保护丢掉（v2.0.3 修复）。
+     * 回退 或 大跳前进（>2.5s，如暂停时拖进度条、seek 快进）：
+     * 统一走 seek 重建。
+     * 优化防抖保护：
+     * 1. 回退增加 400ms 容差（nowMs + 400 < lastTimeMsRef.current），
+     *    防止 ExoPlayer HLS 切片边界/PTS 时钟微小抖动（5~50ms）误触发 seek 重建，
+     *    避免导致所有在屏弹幕瞬间被强行重挂载并打断动画。
+     * 2. 快进阈值放宽到 2500ms，避免 1.5x 倍速或 JS/GC 调度轻微延迟（>1000ms）
+     *    被误判为用户 seek，导致弹幕突然卡顿重算。
      */
-    if (nowMs + 1 < lastTimeMsRef.current || nowMs - lastTimeMsRef.current > 1000) {
+    const isRewind = nowMs + 400 < lastTimeMsRef.current;
+    const isForwardSeek = nowMs - lastTimeMsRef.current > 2500;
+    if (isRewind || isForwardSeek) {
       engine.seek(nowMs);
       lastTimeMsRef.current = nowMs;
       const snapped = engine.active(nowMs);
@@ -303,12 +310,23 @@ const DanmakuLine = React.memo(function DanmakuLine({ entry, width, currentTime,
       cancelAnimation(x);
       return;
     }
-    const remainMs = Math.max(0, entry.timeMs + entry.durationMs - nowMsRef.current);
-    x.value = withTiming(endX, { duration: remainMs, easing: Easing.linear });
+    // 匀速物理模型：根据当前实际坐标到目标终点的物理距离除以 stepX 速度计算准确动画时长
+    // 保证无论经过暂停、切片缓冲、还是挂载恢复，始终以恒定设计初速 stepX 平滑匀速飞行
+    // 彻底根除"时间差被压缩导致弹幕突然停顿随后数倍速飞出屏幕"的严重 Bug
+    const currentX = x.value;
+    const dist = Math.abs(endX - currentX);
+    const duration =
+      entry.stepX > 0
+        ? Math.round(dist / entry.stepX)
+        : Math.max(0, entry.timeMs + entry.durationMs - nowMsRef.current);
+
+    if (duration > 0 && dist > 1) {
+      x.value = withTiming(endX, { duration, easing: Easing.linear });
+    }
     return () => {
       cancelAnimation(x);
     };
-  }, [playing, startX, endX, entry.timeMs, entry.durationMs, x]);
+  }, [playing, startX, endX, entry.stepX, entry.timeMs, entry.durationMs, x]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: x.value }],

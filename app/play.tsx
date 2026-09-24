@@ -861,7 +861,7 @@ export default function PlayScreen() {
 
         <DanmakuOverlay
           currentTime={playerState.positionMs / 1000}
-          playing={playerState.status === 'playing'}
+          playing={playerState.status === 'playing' || playerState.status === 'buffering'}
           width={videoWidth}
           height={videoHeight}
           settings={danmakuSettings}

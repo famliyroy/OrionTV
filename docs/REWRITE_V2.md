@@ -526,6 +526,24 @@ python work/fix_tags.py      # 不一致时：删 tag → 按真实构建提交�
      - 手机端：竖屏稳健 3 列，无缝铺满屏幕无留白。
    - 搜索结果（`search.tsx`）与观看记录（`me.tsx`）等全站资源展示在不同设备与横竖屏下均呈现出最匀称舒适的 2:3 黄金海报纵横比。
 
+### 9.7 v2.0.7 弹幕匀速物理模型与个人中心账号页滚动适配（2026-09-24）
+
+针对弹幕运行卡顿突变与个人中心账号页截断问题进行攻坚修复：
+
+1. **弹幕运行突发停顿与随后的加速离去 Bug 根治**：
+   - **问题定位**：
+     - 现象：弹幕正常流动一段时间后，突然停滞在屏幕中央，紧接着以数倍的速度狂奔滑出屏幕。
+     - 根因 1（时钟跳跃误判）：原先在 `DanmakuOverlay` 中采用 `nowMs + 1 < lastTimeMsRef.current || nowMs - lastTimeMsRef.current > 1000` 作为判定用户拖动进度条 seek 的依据。但实际由于视频解码器在 HLS 分片交界处的 PTS 微小回退（5~50ms）或 1.5x 倍速/GC 调度产生的正常轻微延迟（>1000ms），被该严苛条件频繁误判为 seek 回退，导致 `resetEpoch` 不断自增，强行就地销毁并重新挂载全部在屏弹幕；
+     - 根因 2（缓冲状态导致的动画打断）：播放器向 `DanmakuOverlay` 传递 `playing={playerState.status === 'playing'}`，当底层视频拉取切片出现瞬时微小缓冲时，状态切为 `buffering` 使得 `playing=false` 触发 `cancelAnimation(x)` 导致弹幕停顿；
+     - 根因 3（时间压缩突变）：当 `playing` 重新恢复时，代码使用 `remainMs = entry.timeMs + entry.durationMs - nowMsRef.current` 重新起跑。由于停滞期间时间流逝，`remainMs` 被大幅压缩，Reanimated 强行在极短时间内把弹幕推到终点，造成视觉上的急剧加速。
+   - **修复落地**：
+     - **防抖与 seek 门槛放宽**：回退增加 400ms 容差（`nowMs + 400 < lastTimeMs`），快进门槛提升至 2500ms，杜绝正常播放抖动被误判为 seek 重建；
+     - **恒定速度物理模型重构**：`DanmakuLine` 彻底放弃压缩时间算法，改为基于当前物理坐标 `x.value` 计算到终点 `endX` 的绝对距离 `dist`，由 `dist / entry.stepX` 严格反推剩余时长，从数学原理上保证无论何时何地恢复动画，速度始终锁定在恒定的设计初速 `stepX`，彻底杜绝任何停顿与加速突变；
+     - **缓冲态平滑覆盖**：`DanmakuOverlay` 的 `playing` 条件对齐控制条逻辑（包含 `status === 'buffering'`），避免微小网络缓冲打断弹幕流畅流动。
+2. **个人中心「我的」页面账号栏滑动支持与键盘弹起兼容**：
+   - **问题定位**：在手机竖屏设备下，由于屏幕纵向高度有限，账号页包含设备列表、修改密码多项输入框、提交修改按钮、退出全部设备、管理员卡片与退出登录按钮，整体高度超出屏幕，而外层原先为非滚动的固定 `View`，导致底部区域被截断且无法上下拖动；
+   - **修复落地**：将 `AccountTab` 内容外层改造为弹性 `ScrollView`，设置 `flex: 1` 配合 `showsVerticalScrollIndicator={false}` 与 `keyboardShouldPersistTaps="handled"`，并留足 `spacing.xxxl * 2` 的底部安全边距，确保各种手机屏幕下设备管理、修改密码与退出登录按钮均能完整、流畅上下滑动触达。
+
 ---
 
 ## 10. 未完成 / P1
